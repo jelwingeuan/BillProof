@@ -1,0 +1,7 @@
+node_modules/
+.next/
+data/billproof.json
+coverage/
+.env.local
+*.tsbuildinfo
+.DS_Store
