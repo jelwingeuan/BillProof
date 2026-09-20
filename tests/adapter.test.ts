@@ -45,3 +45,18 @@ test("contradictory status bodies, oversized responses and redirects are rejecte
   try { await assert.rejects(new LocalHttpAdapter({ targetUrl: redirect.url, timeoutMs: 100 }).probe("fixture", "api"), AdapterError); }
   finally { await redirect.stop(); }
 });
+
+test("cleanup still runs after the scenario deadline", async () => {
+  const requests: string[] = [];
+  const target = await server((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end('{"ok":true}');
+  });
+  try {
+    const adapter = new LocalHttpAdapter({ targetUrl: target.url, providerUrl: target.url, timeoutMs: 100, runDeadlineMs: 0 });
+    await assert.rejects(adapter.probe("expired", "api"), /60-second execution deadline/);
+    await adapter.cleanup("expired");
+    assert.deepEqual(requests.sort(), ["DELETE /provider/state?scenarioId=expired", "DELETE /test/fixture?scenarioId=expired"]);
+  } finally { await target.stop(); }
+});

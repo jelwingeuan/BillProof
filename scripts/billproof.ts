@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const scenario = report?.inputs?.scenario ?? state?.scenarios.find((item) => item.id === scenarioId);
   if (!project || !scenario) throw new Error("Saved project or scenario not found.");
   const run = await runScenario({ project, scenario, mode: report?.targetMode ?? mode!, targetUrl: value("--target"), providerUrl: value("--provider") });
-  console.log(JSON.stringify({ id: run.id, status: run.status, findings: run.findings, error: run.error, reproductionCommand: run.reproductionCommand }, null, 2));
+  console.log(JSON.stringify({ id: run.id, status: run.status, findings: run.findings, warnings: run.warnings, error: run.error, reproductionCommand: run.reproductionCommand }, null, 2));
   process.exitCode = run.status === "pass" ? 0 : run.status === "fail" ? 1 : 2;
 }
 

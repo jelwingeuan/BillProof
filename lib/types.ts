@@ -161,6 +161,10 @@ export const FindingSchema = z.object({
 export type Finding = z.infer<typeof FindingSchema>;
 
 export const ScenarioRunSchema = z.object({
+  schemaVersion: z.literal(1).optional(),
+  runnerVersion: z.string().min(1).optional(),
+  warnings: z.array(z.string()).optional(),
+  contractVersion: z.literal(1).optional(),
   id: z.string(),
   projectId: z.string(),
   scenarioId: z.string(),

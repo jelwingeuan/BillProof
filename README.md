@@ -32,6 +32,7 @@ Run `npm ci`, `npm test`, and `npm run build`. Keep `npm run target` running in 
 
 ```bash
 npm run target                 # separately running sample SaaS + provider emulator
+npm run doctor                 # check runtime, data, target contract, and provider
 npm run dev                    # local BillProof UI, normally port 3000
 npm run cli -- --scenario stale-pre-cancellation --mode corrected
 npm test
@@ -40,7 +41,7 @@ npm run typecheck
 npm run build
 ```
 
-The CLI exits `0` for a passing run, `1` for findings, and `2` for execution errors. Use `--help` for its small local contract.
+The CLI exits `0` for a passing run, `1` for findings, and `2` for execution errors. Use `--help` for its small local contract. Run `npm run doctor` while the target is running to diagnose setup problems before opening the dashboard.
 
 ## Demo walkthrough
 
@@ -70,8 +71,9 @@ If a crash leaves `data/billproof.json.lock`, saves fail safely after five secon
 ## Important limits
 
 - The billing provider and target are simulations. This does **not** validate a live Stripe integration or prove every possible billing behavior.
-- Operations default to a two-second timeout and runs have a 60-second deadline. JSON requests and target responses are limited to 100 KB. Imports contain 1–50 unique scenarios (up to 100 steps each), with at most 200 saved scenarios.
+- Operations default to a two-second timeout and runs have a 60-second deadline. Access checks retry inside the configured convergence window before reporting a mismatch. JSON requests and target responses are limited to 100 KB. Imports contain 1–50 unique scenarios (up to 100 steps each), with at most 200 saved scenarios.
 - Explicit access assertions compare the final observation of that feature; effect assertions check the final effect count. Runs without checks or with unrecovered failed deliveries return an error. Run fixtures are unique and released on completion.
+- A probe that does not complete within the convergence window returns an execution error; a completed mismatch remains a finding. Cleanup failures are retained as report warnings and shown in the dashboard and CLI.
 - Refunds remain policy-sensitive and do not automatically cancel a subscription. Seats, metered/usage billing, tax, proration accounting, disputes, and multiple concurrent subscriptions are out of scope.
 - The sample target deliberately contains an unsafe mode. It is only seeded demo code, never a patch or diagnosis of a customer application.
 
@@ -82,4 +84,4 @@ If a crash leaves `data/billproof.json.lock`, saves fail safely after five secon
 - **Run shows error:** error is intentional for an unreachable target, timeout, malformed response, or invalid imported scenario; errors are never converted to passes.
 - **Reset the demo data:** stop the dashboard and delete only `BillProof/data/billproof.json`. This removes local BillProof runs and settings.
 
-Read [the product specification](docs/product-spec.md), [architecture and integration contract](docs/architecture.md), [scenario matrix](docs/scenario-matrix.md), [roadmap](docs/roadmap.md), and [pilot validation plan](docs/validation-plan.md) before extending the MVP.
+Read [the product specification](docs/product-spec.md), [architecture](docs/architecture.md), [integration contract v1](docs/integration-contract.md), [scenario matrix](docs/scenario-matrix.md), [roadmap](docs/roadmap.md), and [pilot validation plan](docs/validation-plan.md) before extending the MVP. Contributions are welcome under the [MIT License](LICENSE); see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

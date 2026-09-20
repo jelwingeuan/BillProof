@@ -10,6 +10,8 @@ export class AdapterError extends Error {
 
 type HttpResult = { status: number; body: unknown; evidence: HttpEvidence };
 
+export const BILLPROOF_CONTRACT_VERSION = 1;
+
 function redact(value: unknown): string {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return text
@@ -22,18 +24,20 @@ export class LocalHttpAdapter {
   readonly targetUrl: string;
   readonly providerUrl: string;
   readonly timeoutMs: number;
-  readonly deadline = Date.now() + 60_000;
+  readonly deadline: number;
 
-  constructor(options: { targetUrl?: string; providerUrl?: string; timeoutMs: number }) {
+  constructor(options: { targetUrl?: string; providerUrl?: string; timeoutMs: number; runDeadlineMs?: number }) {
     this.targetUrl = localUrl(options.targetUrl ?? process.env.BILLPROOF_TARGET_URL ?? "http://127.0.0.1:4100");
     this.providerUrl = localUrl(options.providerUrl ?? process.env.BILLPROOF_PROVIDER_URL ?? "http://127.0.0.1:4101");
     this.timeoutMs = options.timeoutMs;
+    this.deadline = Date.now() + (options.runDeadlineMs ?? 60_000);
   }
 
-  private async request(label: string, method: string, base: string, path: string, payload?: unknown): Promise<HttpResult> {
+  private async request(label: string, method: string, base: string, path: string, payload?: unknown, ignoreRunDeadline = false, observationDeadline = Infinity): Promise<HttpResult> {
     const started = Date.now();
     const controller = new AbortController();
-    const remaining = Math.min(this.timeoutMs, this.deadline - started);
+    const remaining = ignoreRunDeadline ? Math.min(this.timeoutMs, 2_000) : Math.min(this.timeoutMs, this.deadline - started, observationDeadline - started);
+    if (observationDeadline <= started) throw new AdapterError("Access convergence deadline exceeded.");
     if (remaining <= 0) throw new AdapterError("Scenario exceeded the 60-second execution deadline.");
     const timer = setTimeout(() => controller.abort(), remaining);
     const url = `${base}${path}`;
@@ -67,6 +71,7 @@ export class LocalHttpAdapter {
         const evidence = { label, method, url, requestSummary: redact(payload ?? ""), responseStatus: response.status, responseBody: redact(raw), elapsedMs: Date.now() - started };
         throw new AdapterError("Target returned malformed JSON evidence.", evidence);
       }
+      if (Date.now() >= observationDeadline) throw new AdapterError("Access convergence deadline exceeded.");
       return {
         status: response.status,
         body,
@@ -74,7 +79,7 @@ export class LocalHttpAdapter {
       };
     } catch (error) {
       if (error instanceof AdapterError) throw error;
-      const message = error instanceof Error && error.name === "AbortError" ? `Timed out after ${this.timeoutMs}ms.` : `Could not reach local target: ${error instanceof Error ? error.message : "unknown error"}`;
+      const message = error instanceof Error && error.name === "AbortError" ? `Timed out after ${remaining}ms.` : `Could not reach local target: ${error instanceof Error ? error.message : "unknown error"}`;
       throw new AdapterError(message, { label, method, url, requestSummary: redact(payload ?? ""), responseStatus: null, responseBody: message, elapsedMs: Date.now() - started });
     } finally {
       clearTimeout(timer);
@@ -90,10 +95,12 @@ export class LocalHttpAdapter {
   }
 
   async cleanup(scenarioId: string): Promise<void> {
-    await Promise.all([
-      this.request("Release target fixture", "DELETE", this.targetUrl, `/test/fixture?scenarioId=${encodeURIComponent(scenarioId)}`),
-      this.request("Release provider fixture", "DELETE", this.providerUrl, `/provider/state?scenarioId=${encodeURIComponent(scenarioId)}`),
+    const results = await Promise.all([
+      this.request("Release target fixture", "DELETE", this.targetUrl, `/test/fixture?scenarioId=${encodeURIComponent(scenarioId)}`, undefined, true),
+      this.request("Release provider fixture", "DELETE", this.providerUrl, `/provider/state?scenarioId=${encodeURIComponent(scenarioId)}`, undefined, true),
     ]);
+    const rejected = results.find((result) => result.status >= 300);
+    if (rejected) throw new AdapterError("Fixture cleanup was rejected.", rejected.evidence);
   }
 
   async setProviderState(scenarioId: string, state: SubscriptionSnapshot): Promise<HttpEvidence> {
@@ -118,8 +125,8 @@ export class LocalHttpAdapter {
     return this.request("Deliver simulated billing event", "POST", this.targetUrl, "/webhooks", { scenarioId, event: BillingEventSchema.parse(item), retry });
   }
 
-  async probe(scenarioId: string, featureId: string, protectedPath = `/protected/${encodeURIComponent(featureId)}`): Promise<{ allowed: boolean; evidence: HttpEvidence }> {
-    const result = await this.request(`Probe protected ${featureId} operation`, "GET", this.targetUrl, `${protectedPath}?scenarioId=${encodeURIComponent(scenarioId)}`);
+  async probe(scenarioId: string, featureId: string, protectedPath = `/protected/${encodeURIComponent(featureId)}`, observationDeadline = Infinity): Promise<{ allowed: boolean; evidence: HttpEvidence }> {
+    const result = await this.request(`Probe protected ${featureId} operation`, "GET", this.targetUrl, `${protectedPath}?scenarioId=${encodeURIComponent(scenarioId)}`, undefined, false, observationDeadline);
     if ((result.status !== 200 && result.status !== 403) || typeof result.body !== "object" || result.body === null || typeof (result.body as { ok?: unknown }).ok !== "boolean") {
       throw new AdapterError("Target returned malformed protected-operation evidence.", result.evidence);
     }

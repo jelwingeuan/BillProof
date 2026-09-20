@@ -1,23 +1,30 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { expectedAccess } from "./policy";
-import { AdapterError, LocalHttpAdapter } from "./http-adapter";
+import { AdapterError, BILLPROOF_CONTRACT_VERSION, LocalHttpAdapter } from "./http-adapter";
 import type { AccessObservation, DeliveryAttempt, Finding, HttpEvidence, Project, Scenario, ScenarioRun, TargetMode } from "./types";
+
+export const BILLPROOF_RUNNER_VERSION = "0.2.0";
 
 function id(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
 function findingForAccess(observation: AccessObservation, customerId: string, evidenceLabel: string): Finding {
-  const paidAccessWasRestored = !observation.expectedAllowed && observation.observedAllowed;
+  const unexpectedAccess = !observation.expectedAllowed && observation.observedAllowed;
   return {
     id: id("finding"),
-    severity: paidAccessWasRestored ? "high" : "medium",
-    title: paidAccessWasRestored ? `Unexpected ${observation.featureId} access` : `Expected ${observation.featureId} access was denied`,
+    severity: unexpectedAccess ? "high" : "medium",
+    title: unexpectedAccess ? `Unexpected ${observation.featureId} access` : `Expected ${observation.featureId} access was denied`,
     customerId,
     featureId: observation.featureId,
     expected: observation.expectedAllowed ? "protected operation allowed" : "protected operation denied",
     observed: observation.observedAllowed ? "protected operation allowed" : "protected operation denied",
-    rootCauseHypothesis: "Hypothesis: the target applied a delivered subscription snapshot instead of reconciling authoritative provider state at the observation time.",
-    suggestedFix: "Record processed delivery IDs for side effects and reconcile the current subscription state under a transaction or concurrency guard before changing access.",
+    rootCauseHypothesis: unexpectedAccess
+      ? "Hypothesis: the target retained stale paid access instead of reconciling authoritative provider state at the observation time."
+      : "Hypothesis: the target has not yet applied the current paid entitlement, or rejected it while handling a billing update.",
+    suggestedFix: unexpectedAccess
+      ? "Reconcile current provider state before granting access, and make stale or duplicate deliveries unable to restore an older entitlement."
+      : "Check the latest provider snapshot and webhook outcome, then apply the entitlement update atomically before serving protected operations.",
     evidenceLabels: [evidenceLabel],
   };
 }
@@ -32,10 +39,13 @@ export async function runScenario(options: { project: Project; scenario: Scenari
   const deliveryAttempts: DeliveryAttempt[] = [];
   const observations: AccessObservation[] = [];
   const findings: Finding[] = [];
+  const warnings: string[] = [];
   let authoritativeState: import("./types").SubscriptionSnapshot | undefined;
 
   const base = {
     id: id("run"), projectId: project.id, scenarioId: scenario.id, scenarioTitle: scenario.title, seed: scenario.seed, targetMode: mode,
+    schemaVersion: 1 as const, runnerVersion: BILLPROOF_RUNNER_VERSION, contractVersion: BILLPROOF_CONTRACT_VERSION as 1,
+    warnings,
     startedAt, virtualStartAt: scenario.startAt, reproductionCommand: `npm run cli -- --scenario ${scenario.id} --mode ${mode}`,
     inputs: { project: structuredClone(project), scenario: structuredClone(scenario) },
   };
@@ -66,10 +76,30 @@ export async function runScenario(options: { project: Project; scenario: Scenari
       }
       if (step.kind === "observe") {
         if (!authoritativeState) throw new Error("Scenario attempted access observation without authoritative provider state.");
+        const expected = new Map(project.features.map((feature) => [feature.id, expectedAccess(project, authoritativeState!, virtualAt, feature.id)]));
+        const latest = new Map<string, Awaited<ReturnType<LocalHttpAdapter["probe"]>>>();
+        const convergenceEndsAt = Date.now() + project.policy.convergenceDeadlineMs;
+        let pending = project.features;
+        do {
+          const activeAdapter = adapter;
+          const round = await Promise.allSettled(pending.map(async (feature) => ({ feature, result: await activeAdapter.probe(fixtureId, feature.id, feature.protectedPath, convergenceEndsAt) })));
+          for (const item of round) {
+            if (item.status === "rejected") continue;
+            const { feature, result } = item.value;
+            latest.set(feature.id, result);
+            evidence.push(result.evidence);
+          }
+          const failed = round.find((item) => item.status === "rejected");
+          if (failed?.status === "rejected") throw failed.reason;
+          pending = project.features.filter((feature) => latest.get(feature.id)?.allowed !== expected.get(feature.id));
+          const remaining = convergenceEndsAt - Date.now();
+          if (pending.length && remaining > 0) await delay(Math.min(100, remaining));
+          else break;
+        } while (pending.length && Date.now() < convergenceEndsAt);
+
         for (const feature of project.features) {
-          const expectedAllowed = expectedAccess(project, authoritativeState, virtualAt, feature.id);
-          const result = await adapter.probe(fixtureId, feature.id, feature.protectedPath);
-          evidence.push(result.evidence);
+          const expectedAllowed = expected.get(feature.id)!;
+          const result = latest.get(feature.id)!;
           const observation: AccessObservation = {
             checkpoint: step.checkpoint, observedAt: virtualAt, featureId: feature.id, expectedAllowed, observedAllowed: result.allowed,
             evidenceType: "protected_operation", httpStatus: result.evidence.responseStatus, response: result.evidence.responseBody,
@@ -120,6 +150,8 @@ export async function runScenario(options: { project: Project; scenario: Scenari
       error: error instanceof Error ? error.message : "Unknown scenario execution error",
     };
   } finally {
-    await adapter?.cleanup(fixtureId).catch((error) => console.error("Could not release local fixture", error instanceof Error ? error.message : "unknown error"));
+    await adapter?.cleanup(fixtureId).catch((error) => {
+      warnings.push(`Could not release local fixture: ${error instanceof Error ? error.message : "unknown error"}. Restart the sample target to clear its fixtures.`);
+    });
   }
 }

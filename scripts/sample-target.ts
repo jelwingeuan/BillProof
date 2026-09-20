@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { BILLPROOF_CONTRACT_VERSION } from "../lib/http-adapter";
 import { BillingEventSchema, ProjectSchema, SubscriptionSnapshotSchema, type Project, type SubscriptionSnapshot, type TargetMode } from "../lib/types";
 import { localRequestError } from "../lib/local-boundary";
 
@@ -140,6 +141,7 @@ export async function startSampleTarget(options: { targetPort?: number; provider
         return send(response, 200, {
           ok: true,
           service: "billproof-sample-target",
+          contractVersion: BILLPROOF_CONTRACT_VERSION,
           provider: providerUrl,
           modes: ["naive", "corrected"],
         });
