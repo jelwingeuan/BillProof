@@ -93,8 +93,9 @@ export async function runScenario(options: { project: Project; scenario: Scenari
           if (failed?.status === "rejected") throw failed.reason;
           pending = project.features.filter((feature) => latest.get(feature.id)?.allowed !== expected.get(feature.id));
           const remaining = convergenceEndsAt - Date.now();
-          if (pending.length && remaining > 0) await delay(Math.min(100, remaining));
-          else break;
+          if (!pending.length || remaining <= 0) break;
+          await delay(Math.min(100, remaining));
+          if (remaining <= 100) break;
         } while (pending.length && Date.now() < convergenceEndsAt);
 
         for (const feature of project.features) {
