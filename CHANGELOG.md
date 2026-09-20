@@ -6,6 +6,7 @@ Notable changes to BillProof are recorded here.
 
 - Added bounded access-convergence polling and reliable post-timeout fixture cleanup.
 - Preserved cleanup warnings in reports, dashboard, and CLI; rejected protected responses arriving after the convergence deadline.
+- Standardized the supported runtime on Node 24 and added `.nvmrc`.
 - Added versioned run and target contracts plus `npm run doctor`.
 - Added open-source license, contribution, security, and community files.
 - Hardened local persistence, imports, replay, evidence, and dashboard usability.

@@ -4,7 +4,7 @@ BillProof checks whether a subscription application's **actual protected operati
 
 ## Quick start
 
-Use Node 24 for the verified local runtime and CI.
+Node 24 is the supported runtime for this release (`nvm use` if you use nvm).
 
 ```bash
 git clone https://github.com/jelwingeuan/BillProof.git

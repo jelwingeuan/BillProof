@@ -25,7 +25,7 @@ test("naive target fails stale evidence, reconciled target passes same seed, dup
     const duplicate = findScenario("duplicate-payment-delivery");
     const retry = findScenario("transient-retry");
     assert.ok(stale); assert.ok(duplicate); assert.ok(retry);
-    const project = { ...demoProject(), policy: { ...demoProject().policy, convergenceDeadlineMs: 120 } };
+    const project = demoProject();
     const naive = await runScenario({ project, scenario: stale, mode: "naive", targetUrl: target.targetUrl, providerUrl: target.providerUrl });
     assert.equal(naive.status, "fail");
     assert.ok(naive.observations.some((item) => item.featureId === "exports" && item.expectedAllowed === false && item.observedAllowed === true && item.httpStatus === 200));

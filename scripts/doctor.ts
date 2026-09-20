@@ -18,9 +18,9 @@ async function check(name: string, action: () => Promise<void>): Promise<void> {
 }
 
 async function main(): Promise<void> {
-await check("Node.js >= 20.9", async () => {
-  const [major, minor] = process.versions.node.split(".").map(Number);
-  if (major < 20 || (major === 20 && minor < 9)) throw new Error(`found ${process.versions.node}`);
+await check("Node.js 24", async () => {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (major !== 24) throw new Error(`found ${process.versions.node}; use Node 24`);
 });
 
 await check("local data is valid and writable", async () => {
