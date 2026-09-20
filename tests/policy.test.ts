@@ -27,3 +27,12 @@ test("immediate cancellation retains only explicitly free dashboard access", () 
   assert.equal(expectedAccess(demoProject(), periodEnd, "2026-01-01T23:59:59.999Z", "api"), true);
   assert.equal(expectedAccess(demoProject(), periodEnd, "2026-01-02T00:00:00.000Z", "api"), false);
 });
+
+test("trial and scheduled cancellation expire without a later billing event", () => {
+  const at = "2026-01-02T00:00:00.000Z";
+  for (const snapshot of [base({ status: "trialing", trialEndsAt: at }), base({ cancelAtPeriodEnd: true, currentPeriodEnd: at })]) {
+    assert.equal(expectedAccess(demoProject(), snapshot, "2026-01-01T23:59:59.999Z", "api"), true);
+    assert.equal(expectedAccess(demoProject(), snapshot, at, "api"), false);
+    assert.equal(expectedAccess(demoProject(), snapshot, at, "dashboard"), true);
+  }
+});

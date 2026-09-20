@@ -1,10 +1,11 @@
-import { demoProject } from "../lib/policy";
+import { readFile } from "node:fs/promises";
 import { runScenario } from "../lib/runner";
-import { findScenario } from "../lib/scenarios";
+import { readState } from "../lib/store";
+import { ScenarioRunSchema } from "../lib/types";
 import type { TargetMode } from "../lib/types";
 
 function usage(): string {
-  return "Usage: npm run cli -- --scenario <stable-scenario-id> --mode <naive|corrected> [--target http://127.0.0.1:4100] [--provider http://127.0.0.1:4101]";
+  return "Usage: npm run cli -- --scenario <saved-scenario-id> --mode <naive|corrected> OR --report <downloaded-report.json> [--target http://127.0.0.1:4100] [--provider http://127.0.0.1:4101]";
 }
 
 const args = process.argv.slice(2);
@@ -19,14 +20,20 @@ const value = (flag: string): string | undefined => {
 const scenarioId = value("--scenario");
 const candidateMode = value("--mode") ?? "corrected";
 const mode: TargetMode | undefined = candidateMode === "naive" || candidateMode === "corrected" ? candidateMode : undefined;
-const scenario = scenarioId ? findScenario(scenarioId) : undefined;
-if (!scenario || !mode) {
-  console.error(`${!scenario ? "Unknown or missing scenario. " : ""}${!mode ? "Mode must be naive or corrected. " : ""}${usage()}`);
+if ((!scenarioId && !value("--report")) || !mode) {
+  console.error(usage());
   process.exit(2);
 }
 
 async function main(): Promise<void> {
-  const run = await runScenario({ project: demoProject(), scenario: scenario!, mode: mode!, targetUrl: value("--target"), providerUrl: value("--provider") });
+  const reportPath = value("--report");
+  const report = reportPath ? ScenarioRunSchema.parse(JSON.parse(await readFile(reportPath, "utf8"))) : undefined;
+  if (report && !report.inputs) throw new Error("This legacy report has no saved inputs. Replay a newly downloaded report.");
+  const state = report ? undefined : await readState();
+  const project = report?.inputs?.project ?? state?.projects[0];
+  const scenario = report?.inputs?.scenario ?? state?.scenarios.find((item) => item.id === scenarioId);
+  if (!project || !scenario) throw new Error("Saved project or scenario not found.");
+  const run = await runScenario({ project, scenario, mode: report?.targetMode ?? mode!, targetUrl: value("--target"), providerUrl: value("--provider") });
   console.log(JSON.stringify({ id: run.id, status: run.status, findings: run.findings, error: run.error, reproductionCommand: run.reproductionCommand }, null, 2));
   process.exitCode = run.status === "pass" ? 0 : run.status === "fail" ? 1 : 2;
 }

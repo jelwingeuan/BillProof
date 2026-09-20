@@ -6,7 +6,7 @@ import type { PersistedState, Project, Scenario, ScenarioRun, TargetMode } from 
 type Tab = "overview" | "setup" | "scenarios" | "integration";
 type HealthState = { state: "checking" | "ready" | "offline"; latencyMs?: number; detail?: string };
 type SuiteState = {
-  status: "idle" | "running" | "stopping" | "complete" | "cancelled";
+  status: "idle" | "running" | "stopping" | "complete" | "cancelled" | "error";
   completed: number;
   total: number;
   current?: string;
@@ -52,6 +52,9 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   const [health, setHealth] = useState<HealthState>({ state: "checking" });
   const [suite, setSuite] = useState<SuiteState>({ status: "idle", completed: 0, total: state.scenarios.length });
   const suiteStopRequested = useRef(false);
+  const actionBusy = useRef(false);
+  const saveBusy = useRef(false);
+  const [saving, setSaving] = useState(false);
 
   const project = state.projects[0];
   const selectedScenario = state.scenarios.find((item) => item.id === selectedScenarioId) ?? state.scenarios[0];
@@ -79,11 +82,13 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     const payload = await response.json();
     if (!payload.id) throw new Error(payload.error ?? "The runner did not return a report.");
     const run = payload as ScenarioRun;
-    setState((current) => ({ ...current, runs: [run, ...current.runs.filter((item) => item.id !== run.id)] }));
+    setState((current) => ({ ...current, runs: [run, ...current.runs.filter((item) => item.id !== run.id)].slice(0, 100) }));
     return run;
   }
 
   async function runOne(scenarioId: string): Promise<void> {
+    if (actionBusy.current || saveBusy.current) return;
+    actionBusy.current = true;
     setRunningScenarioId(scenarioId); setNotice("");
     try {
       const run = await executeScenario(scenarioId, mode);
@@ -94,12 +99,15 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     } catch (error) {
       setNotice(`Run error: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
+      actionBusy.current = false;
       setRunningScenarioId(null);
       void checkHealth();
     }
   }
 
   async function compareModes(scenarioId: string): Promise<void> {
+    if (actionBusy.current || saveBusy.current) return;
+    actionBusy.current = true;
     setRunningScenarioId(scenarioId); setNotice("Running the same scenario and seed against both demo behaviors…");
     try {
       const naive = await executeScenario(scenarioId, "naive");
@@ -109,12 +117,15 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     } catch (error) {
       setNotice(`Comparison error: ${error instanceof Error ? error.message : "unknown error"}`);
     } finally {
+      actionBusy.current = false;
       setRunningScenarioId(null);
       void checkHealth();
     }
   }
 
   async function runSuite(): Promise<void> {
+    if (actionBusy.current || saveBusy.current) return;
+    actionBusy.current = true;
     suiteStopRequested.current = false;
     setNotice("");
     setSuite({ status: "running", completed: 0, total: state.scenarios.length, current: state.scenarios[0]?.title });
@@ -129,16 +140,17 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
       } catch (error) {
         requestError = error instanceof Error ? error.message : "unknown suite error";
       }
-      completed += 1;
+      if (!requestError) completed += 1;
       setSuite({ status: suiteStopRequested.current ? "stopping" : "running", completed, total: state.scenarios.length, current: item.title });
       if (requestError) break;
     }
+    actionBusy.current = false;
     setRunningScenarioId(null);
     if (suiteStopRequested.current) {
       setSuite({ status: "cancelled", completed, total: state.scenarios.length });
       setNotice(`Suite stopped after ${completed} of ${state.scenarios.length} scenarios. The in-flight run was allowed to finish and remains in evidence.`);
     } else {
-      setSuite({ status: "complete", completed, total: state.scenarios.length });
+      setSuite({ status: requestError ? "error" : "complete", completed, total: state.scenarios.length });
       setNotice(requestError ? `Suite stopped on an execution error: ${requestError}` : `Suite complete: ${completed} deterministic reports recorded in ${mode} mode.`);
     }
     void checkHealth();
@@ -150,6 +162,9 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   }
 
   async function saveProject(next: Project): Promise<void> {
+    if (saveBusy.current || actionBusy.current) return;
+    saveBusy.current = true;
+    setSaving(true);
     setNotice("");
     try {
       const response = await fetch("/api/project", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
@@ -159,7 +174,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
       setNotice("Project policy saved locally. Existing reports remain unchanged; new runs use this policy.");
     } catch (error) {
       setNotice(`Could not save configuration: ${error instanceof Error ? error.message : "unknown error"}`);
-    }
+    } finally { saveBusy.current = false; setSaving(false); }
   }
 
   async function importScenarios(): Promise<void> {
@@ -210,11 +225,12 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
         {notice && <div role="status" className="notice"><span aria-hidden>●</span>{notice}</div>}
 
         {tab === "overview" && <Overview
+          busy={Boolean(runningScenarioId) || saving}
           runs={state.runs} failures={failures} scenarios={scenarioById} selectedRun={selectedRun} health={health}
           onSelectRun={(run) => setSelectedRunId(run.id)} onRefreshHealth={() => void checkHealth()}
           onCompareDemo={() => void compareModes("stale-pre-cancellation")} onBrowse={() => setTab("scenarios")}
         />}
-        {tab === "setup" && <Setup project={project} onPolicy={updatePolicy} onToggle={toggleFeature} />}
+        {tab === "setup" && <fieldset className="settings-fieldset" disabled={saving || Boolean(runningScenarioId)} aria-busy={saving}><legend className="sr-only">Project settings</legend><p role="status">{saving ? "Saving changes…" : runningScenarioId ? "Settings are locked while a run is active." : "Changes save automatically."}</p><Setup project={project} onPolicy={updatePolicy} onToggle={toggleFeature} /></fieldset>}
         {tab === "scenarios" && <Scenarios
           scenarios={state.scenarios} selected={selectedScenario} mode={mode} running={runningScenarioId} suite={suite}
           query={scenarioQuery} importText={importText} health={health}
@@ -234,14 +250,16 @@ function HealthBadge({ health, onRefresh }: { health: HealthState; onRefresh: ()
   return <button className={`health-badge health-${health.state}`} onClick={onRefresh} aria-label={`${label}. Refresh readiness.`}><span aria-hidden>●</span>{label}</button>;
 }
 
-function Overview({ runs, failures, scenarios, selectedRun, health, onSelectRun, onRefreshHealth, onCompareDemo, onBrowse }: {
+function Overview({ runs, failures, scenarios, selectedRun, health, onSelectRun, onRefreshHealth, onCompareDemo, onBrowse, busy }: {
+  busy: boolean;
   runs: ScenarioRun[]; failures: ScenarioRun[]; scenarios: Map<string, Scenario>; selectedRun?: ScenarioRun; health: HealthState;
   onSelectRun: (run: ScenarioRun) => void; onRefreshHealth: () => void; onCompareDemo: () => void; onBrowse: () => void;
 }) {
   const latest = runs[0];
+  const [visibleCount, setVisibleCount] = useState(10);
   return <div className="content-stack">
     <section className="hero-panel">
-      <div><p className="eyebrow">Release confidence / local proof</p><h1>Catch incorrect customer access before release.</h1><p>Replay billing lifecycles, probe protected operations, and leave with evidence your team can reproduce.</p><div className="hero-actions"><button className="btn btn-primary" onClick={onCompareDemo}>Compare demo targets</button><button className="btn btn-secondary" onClick={onBrowse}>Browse 12 scenarios</button></div></div>
+      <div><p className="eyebrow">Release confidence / local proof</p><h1>Catch incorrect customer access before release.</h1><p>Replay billing lifecycles, probe protected operations, and leave with evidence your team can reproduce.</p><div className="hero-actions"><button className="btn btn-primary" onClick={onCompareDemo} disabled={busy}>{busy ? "Check in progress…" : "Compare demo targets"}</button><button className="btn btn-secondary" onClick={onBrowse}>Browse {scenarios.size} scenarios</button></div></div>
       <div className="proof-card"><div className="proof-icon" aria-hidden>✓</div><strong>Same scenario. Same seed.</strong><span>Compare a stale-event failure with the reconciled reference behavior.</span><code>stale-pre-cancellation</code></div>
     </section>
 
@@ -255,9 +273,10 @@ function Overview({ runs, failures, scenarios, selectedRun, health, onSelectRun,
 
     <section className="card section-card">
       <div className="section-heading"><div><p className="eyebrow">Evidence ledger</p><h2>Recent local runs</h2><p>Every row is a persisted runner report, including deliberate demo failures.</p></div><button className="btn btn-secondary" onClick={onBrowse}>New check</button></div>
-      {runs.length === 0 ? <Empty text="No runs yet. Start the sample target, then compare the demo targets." /> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Scenario</th><th>Behavior</th><th>Result</th><th>Findings</th><th>Evidence</th><th>Completed (UTC)</th></tr></thead><tbody>{runs.slice(0, 10).map((run) => <tr key={run.id} className={selectedRun?.id === run.id ? "selected-row" : undefined}><td><button className="table-link" onClick={() => onSelectRun(run)}>{scenarios.get(run.scenarioId)?.title ?? run.scenarioId}</button><small>{run.seed}</small></td><td className="capitalize">{run.targetMode}</td><td><Status status={run.status} /></td><td>{run.findings.length}</td><td>{run.evidence.length} records</td><td>{date(run.completedAt)}</td></tr>)}</tbody></table></div>}
+      {runs.length === 0 ? <Empty text="No runs yet. Start the sample target, then compare the demo targets." /> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Scenario</th><th>Behavior</th><th>Result</th><th>Findings</th><th>Evidence</th><th>Completed (UTC)</th></tr></thead><tbody>{runs.slice(0, visibleCount).map((run) => <tr key={run.id} className={selectedRun?.id === run.id ? "selected-row" : undefined}><td><button className="table-link" onClick={() => onSelectRun(run)}>{run.scenarioTitle}</button><small>{run.seed}</small></td><td className="capitalize">{run.targetMode}</td><td><Status status={run.status} /></td><td>{run.findings.length}</td><td>{run.evidence.length} records</td><td>{date(run.completedAt)}</td></tr>)}</tbody></table></div>}
     </section>
-    {selectedRun && <RunDetail run={selectedRun} />}
+    {runs.length > visibleCount && <button className="btn btn-secondary" onClick={() => setVisibleCount((count) => count + 10)}>Show more reports ({runs.length - visibleCount} remaining)</button>}
+    {selectedRun && <RunDetail key={selectedRun.id} run={selectedRun} />}
   </div>;
 }
 
@@ -269,7 +288,8 @@ function Empty({ text }: { text: string }) { return <div className="empty-state"
 function Setup({ project, onPolicy, onToggle }: { project: Project; onPolicy: <K extends keyof Project["policy"]>(key: K, value: Project["policy"][K]) => void; onToggle: (planId: string, featureId: string) => void }) {
   return <div className="content-stack"><PageHeading eyebrow="Project policy" title="Make intended access explicit" description="Map durable plan IDs to protected features, then define the lifecycle boundaries BillProof should enforce." />
     <section className="card section-card"><div className="section-heading compact"><div><h2>Plan and feature mapping</h2><p>Price references remain separate from entitlement semantics.</p></div><span className="saved-label">Autosaves locally</span></div><div className="plan-grid">{project.plans.map((plan) => <fieldset key={plan.id} className="plan-card"><legend>{plan.label}</legend><div className="plan-meta"><code>{plan.id}</code><span>{plan.priceReference}</span></div>{project.features.map((feature) => <label key={feature.id} className="feature-check"><input type="checkbox" checked={plan.featureIds.includes(feature.id)} onChange={() => onToggle(plan.id, feature.id)} /><span><strong>{feature.label}</strong><small>{feature.protectedPath}</small></span></label>)}</fieldset>)}</div></section>
-    <section className="card section-card"><div className="section-heading compact"><div><h2>Lifecycle boundaries</h2><p>New runs use these rules. Existing evidence stays immutable.</p></div></div><div className="policy-grid"><Select label="Trial access" value={project.policy.trialAccess} onChange={(value) => onPolicy("trialAccess", value as Project["policy"]["trialAccess"])} options={[["purchased_plan", "Purchased plan"], ["free", "Free only"]]} /><Select label="Failed-payment grace" value={String(project.policy.failedPaymentGraceSeconds / 86400)} onChange={(value) => onPolicy("failedPaymentGraceSeconds", Number(value) * 86400)} options={[["0", "No grace"], ["1", "1 day"], ["3", "3 days"], ["7", "7 days"]]} /><Select label="Access during grace" value={String(project.policy.accessDuringGrace)} onChange={(value) => onPolicy("accessDuringGrace", value === "true")} options={[["true", "Allow paid plan"], ["false", "Free only"]]} /><Select label="Default cancellation" value={project.policy.cancellationDefault} onChange={(value) => onPolicy("cancellationDefault", value as Project["policy"]["cancellationDefault"])} options={[["immediate", "Immediate"], ["period_end", "Period end"]]} /><Select label="Upgrade timing" value={project.policy.upgradeTiming} onChange={(value) => onPolicy("upgradeTiming", value as Project["policy"]["upgradeTiming"])} options={[["immediate", "Immediate"], ["period_end", "Period end"]]} /><Select label="Downgrade timing" value={project.policy.downgradeTiming} onChange={(value) => onPolicy("downgradeTiming", value as Project["policy"]["downgradeTiming"])} options={[["immediate", "Immediate"], ["period_end", "Period end"]]} /></div></section>
+    <section className="card section-card"><div className="section-heading compact"><div><h2>Lifecycle boundaries</h2><p>New runs use these rules. Existing evidence stays immutable.</p></div></div><div className="policy-grid"><Select label="Trial access" value={project.policy.trialAccess} onChange={(value) => onPolicy("trialAccess", value as Project["policy"]["trialAccess"])} options={[["purchased_plan", "Purchased plan"], ["free", "Free only"]]} /><Select label="Access during grace" value={String(project.policy.accessDuringGrace)} onChange={(value) => onPolicy("accessDuringGrace", value === "true")} options={[["true", "Allow paid plan"], ["false", "Free only"]]} /><Select label="Default cancellation" value={project.policy.cancellationDefault} onChange={(value) => onPolicy("cancellationDefault", value as Project["policy"]["cancellationDefault"])} options={[["immediate", "Immediate"], ["period_end", "Period end"]]} /></div></section>
+    <p className="supporting-copy">Grace expiry and plan-change dates come from each scenario’s provider snapshots. Change those dates through scenario JSON to test other boundaries.</p>
   </div>;
 }
 
@@ -288,11 +308,11 @@ function Scenarios({ scenarios, selected, mode, running, suite, query, importTex
   const suiteBusy = suite.status === "running" || suite.status === "stopping";
   const percent = suite.total ? Math.round((suite.completed / suite.total) * 100) : 0;
   return <div className="content-stack"><PageHeading eyebrow="Scenario catalogue" title="Exercise the lifecycle, not just the webhook" description="Events and provider state are simulated; every protected-operation observation is a real local HTTP interaction." />
-    <section className="card run-toolbar"><div><label className="label" htmlFor="target-mode">Target behavior</label><select id="target-mode" className="control" value={mode} onChange={(event) => onMode(event.target.value as TargetMode)}><option value="naive">Naive — intentionally flawed</option><option value="corrected">Corrected — reconciled reference</option></select></div><div className="toolbar-status"><span className={`service-dot service-${health.state}`} aria-hidden>●</span><strong>{health.state === "ready" ? "Target ready" : health.state === "offline" ? "Target offline" : "Checking target"}</strong><small>Runs still produce an error report when setup is unavailable.</small></div><div className="toolbar-actions">{suiteBusy ? <button className="btn btn-danger" onClick={onStopSuite} disabled={suite.status === "stopping"}>{suite.status === "stopping" ? "Stopping after current…" : "Stop after current"}</button> : <button className="btn btn-secondary" onClick={onSuite} disabled={Boolean(running)}>Run full suite</button>}</div></section>
-    {suite.status !== "idle" && <section className="suite-progress" aria-live="polite"><div><strong>{suite.status === "complete" ? "Suite complete" : suite.status === "cancelled" ? "Suite stopped" : suite.status === "stopping" ? "Stopping after current run" : "Suite running"}</strong><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" aria-label={`${percent}% complete`}><span style={{ width: `${percent}%` }} /></div></section>}
+    <section className="card run-toolbar"><div><label className="label" htmlFor="target-mode">Target behavior</label><select id="target-mode" className="control" disabled={Boolean(running)} value={mode} onChange={(event) => onMode(event.target.value as TargetMode)}><option value="naive">Naive — intentionally flawed</option><option value="corrected">Corrected — reconciled reference</option></select></div><div className="toolbar-status"><span className={`service-dot service-${health.state}`} aria-hidden>●</span><strong>{health.state === "ready" ? "Target ready" : health.state === "offline" ? "Target offline" : "Checking target"}</strong><small>Runs still produce an error report when setup is unavailable.</small></div><div className="toolbar-actions">{suiteBusy ? <button className="btn btn-danger" onClick={onStopSuite} disabled={suite.status === "stopping"}>{suite.status === "stopping" ? "Stopping after current…" : "Stop after current"}</button> : <button className="btn btn-secondary" onClick={onSuite} disabled={Boolean(running)}>Run full suite</button>}</div></section>
+    {suite.status !== "idle" && <section className="suite-progress" aria-live="polite"><div><strong>{suite.status === "complete" ? "Suite complete" : suite.status === "cancelled" ? "Suite stopped" : suite.status === "error" ? "Suite interrupted" : suite.status === "stopping" ? "Stopping after current run" : "Suite running"}</strong><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" aria-label={`${percent}% complete`}><span style={{ width: `${percent}%` }} /></div></section>}
     <div className="scenario-layout"><section><div className="scenario-filter"><label><span className="sr-only">Search scenarios</span><input className="control" type="search" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search checkout, cancellation, duplicate…" /></label><span>{filtered.length} of {scenarios.length}</span></div><div className="scenario-list">{filtered.map((item) => <button key={item.id} onClick={() => onSelect(item.id)} className={`scenario-card ${visibleSelection?.id === item.id ? "is-selected" : ""}`}><span className="scenario-index">{String(scenarios.indexOf(item) + 1).padStart(2, "0")}</span><span className="scenario-copy"><strong>{item.title}</strong><small>{item.description}</small><span className="tag-row">{item.tags.map((tag) => <em key={tag}>{tag}</em>)}</span></span>{item.tags.includes("demo-failure") && <span className="pill pill-fail">demo fault</span>}</button>)}{filtered.length === 0 && <Empty text="No scenarios match this search." />}</div></section>
       <aside className="scenario-aside">{visibleSelection && <section className="card selection-card"><p className="eyebrow">Selected scenario</p><h2>{visibleSelection.title}</h2><p>{visibleSelection.description}</p><dl><div><dt>Stable ID</dt><dd><code>{visibleSelection.id}</code></dd></div><div><dt>Seed</dt><dd><code>{visibleSelection.seed}</code></dd></div><div><dt>Steps</dt><dd>{visibleSelection.steps.length}</dd></div></dl><button className="btn btn-primary w-full" disabled={Boolean(running)} onClick={() => onRun(visibleSelection.id)}>{running === visibleSelection.id ? "Running check…" : `Run in ${mode} mode`}</button><button className="btn btn-secondary mt-2 w-full" disabled={Boolean(running)} onClick={() => onCompare(visibleSelection.id)}>Compare naive vs corrected</button></section>}
-      <details className="card import-card"><summary>Import scenario JSON</summary><p>Paste one scenario or an array. Schema validation runs before local storage.</p><textarea aria-label="Scenario JSON import" className="control mono" value={importText} onChange={(event) => onImportText(event.target.value)} placeholder='{"id":"my-scenario", ...}' /><button className="btn btn-secondary w-full" disabled={!importText.trim()} onClick={onImport}>Validate and import</button></details></aside>
+      <details className="card import-card"><summary>Import scenario JSON</summary><p>Paste one scenario or an array. Schema validation runs before local storage.</p><textarea aria-label="Scenario JSON import" className="control mono" value={importText} onChange={(event) => onImportText(event.target.value)} placeholder='{"id":"my-scenario", ...}' /><button className="btn btn-secondary w-full" disabled={!importText.trim() || Boolean(running)} onClick={onImport}>Validate and import</button></details></aside>
     </div>
   </div>;
 }
@@ -315,8 +335,14 @@ function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: 
 }
 
 function RunDetail({ run }: { run: ScenarioRun }) {
+  const [copyStatus, setCopyStatus] = useState("");
+  async function copyCommand() {
+    const command = run.inputs ? `npm run cli -- --report \"billproof-${run.scenarioId}-${run.id}.json\"` : run.reproductionCommand;
+    try { await navigator.clipboard.writeText(command); setCopyStatus(run.inputs ? "Copied. Download the report, then run beside that file." : "Copied. Legacy reports use current settings."); }
+    catch { setCopyStatus(`Copy manually: ${command}`); }
+  }
   const mismatches = run.observations.filter((item) => item.observedAllowed !== item.expectedAllowed).length;
-  return <section className="card report-card" aria-label="Run report"><header className="report-header"><div><p className="eyebrow">Run report / {run.id}</p><div className="report-title"><h2>{run.scenarioTitle}</h2><Status status={run.status} /></div><p>{run.targetMode} behavior · seed {run.seed} · completed {date(run.completedAt)} UTC</p></div><div className="report-actions"><a className="btn btn-secondary" href={`/api/export?run=${encodeURIComponent(run.id)}`} download>Download report</a><button className="btn btn-secondary" onClick={() => void navigator.clipboard?.writeText(run.reproductionCommand)}>Copy command</button></div></header>
+  return <section className="card report-card" aria-label="Run report"><header className="report-header"><div><p className="eyebrow">Run report / {run.id}</p><div className="report-title"><h2>{run.scenarioTitle}</h2><Status status={run.status} /></div><p>{run.targetMode} behavior · seed {run.seed} · completed {date(run.completedAt)} UTC</p></div><div className="report-actions"><a className="btn btn-secondary" href={`/api/export?run=${encodeURIComponent(run.id)}`} download>Download report</a><button className="btn btn-secondary" onClick={() => void copyCommand()}>Copy replay command</button><span role="status">{copyStatus}</span></div></header>
     <div className="report-metrics"><Metric label="Observations" value={String(run.observations.length)} note="Protected operations" /><Metric label="Mismatches" value={String(mismatches)} note="Expected vs observed" tone={mismatches ? "red" : "green"} /><Metric label="Deliveries" value={String(run.deliveryAttempts.length)} note="In recorded order" /><Metric label="HTTP records" value={String(run.evidence.length)} note="Redacted evidence" /></div>
     {run.error && <div className="error-banner"><strong>Execution error</strong><span>{run.error}</span></div>}
     {run.findings.length > 0 && <section className="report-section"><div className="section-heading compact"><div><p className="eyebrow">Requires attention</p><h3>{run.findings.length} access finding{run.findings.length === 1 ? "" : "s"}</h3></div></div><div className="finding-grid">{run.findings.map((finding) => <article key={finding.id} className="finding-card"><div><span className="pill pill-fail">{finding.severity}</span><code>{finding.featureId ?? "side effect"}</code></div><h4>{finding.title}</h4><p><strong>Expected:</strong> {finding.expected}<br /><strong>Observed:</strong> {finding.observed}</p><p><strong>Hypothesis:</strong> {finding.rootCauseHypothesis.replace(/^Hypothesis:\s*/i, "")}</p><p><strong>Suggested fix:</strong> {finding.suggestedFix}</p></article>)}</div></section>}

@@ -1,4 +1,4 @@
-const targetUrl = process.env.BILLPROOF_TARGET_URL ?? "http://127.0.0.1:4100";
+import { localUrl } from "../../../lib/local-boundary";
 
 export const dynamic = "force-dynamic";
 
@@ -8,8 +8,10 @@ export async function GET() {
   const timer = setTimeout(() => controller.abort(), 1_200);
 
   try {
+    const targetUrl = localUrl(process.env.BILLPROOF_TARGET_URL ?? "http://127.0.0.1:4100");
     const response = await fetch(`${targetUrl}/health`, {
       cache: "no-store",
+      redirect: "error",
       signal: controller.signal,
     });
     const body = await response.json() as { ok?: unknown; service?: unknown };
@@ -21,7 +23,7 @@ export async function GET() {
     const detail = error instanceof Error && error.name === "AbortError"
       ? "Target readiness check timed out."
       : error instanceof Error ? error.message : "Target readiness check failed.";
-    return Response.json({ ready: false, targetUrl, latencyMs: Date.now() - started, detail }, { status: 503 });
+    return Response.json({ ready: false, latencyMs: Date.now() - started, detail }, { status: 503 });
   } finally {
     clearTimeout(timer);
   }

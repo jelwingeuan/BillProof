@@ -63,6 +63,8 @@ export function expectedFeatureIds(project: Project, snapshot: SubscriptionSnaps
     entitled = Boolean(behavior === "period_end" && snapshot.currentPeriodEnd && Date.parse(at) < Date.parse(snapshot.currentPeriodEnd));
   }
 
+  if (snapshot.status === "trialing" && snapshot.trialEndsAt && Date.parse(at) >= Date.parse(snapshot.trialEndsAt)) entitled = false;
+  if (snapshot.cancelAtPeriodEnd && snapshot.currentPeriodEnd && Date.parse(at) >= Date.parse(snapshot.currentPeriodEnd)) entitled = false;
   return (entitled ? activePlan : freePlan).featureIds;
 }
 

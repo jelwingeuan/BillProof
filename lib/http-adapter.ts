@@ -1,4 +1,5 @@
 import { BillingEventSchema, ProjectSchema, SubscriptionSnapshotSchema, type BillingEvent, type HttpEvidence, type Project, type SubscriptionSnapshot, type TargetMode } from "./types";
+import { localUrl } from "./local-boundary";
 
 export class AdapterError extends Error {
   constructor(message: string, readonly evidence?: HttpEvidence) {
@@ -21,26 +22,44 @@ export class LocalHttpAdapter {
   readonly targetUrl: string;
   readonly providerUrl: string;
   readonly timeoutMs: number;
+  readonly deadline = Date.now() + 60_000;
 
   constructor(options: { targetUrl?: string; providerUrl?: string; timeoutMs: number }) {
-    this.targetUrl = options.targetUrl ?? process.env.BILLPROOF_TARGET_URL ?? "http://127.0.0.1:4100";
-    this.providerUrl = options.providerUrl ?? process.env.BILLPROOF_PROVIDER_URL ?? "http://127.0.0.1:4101";
+    this.targetUrl = localUrl(options.targetUrl ?? process.env.BILLPROOF_TARGET_URL ?? "http://127.0.0.1:4100");
+    this.providerUrl = localUrl(options.providerUrl ?? process.env.BILLPROOF_PROVIDER_URL ?? "http://127.0.0.1:4101");
     this.timeoutMs = options.timeoutMs;
   }
 
   private async request(label: string, method: string, base: string, path: string, payload?: unknown): Promise<HttpResult> {
     const started = Date.now();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const remaining = Math.min(this.timeoutMs, this.deadline - started);
+    if (remaining <= 0) throw new AdapterError("Scenario exceeded the 60-second execution deadline.");
+    const timer = setTimeout(() => controller.abort(), remaining);
     const url = `${base}${path}`;
     try {
       const response = await fetch(url, {
         method,
+        redirect: "error",
         headers: payload === undefined ? undefined : { "content-type": "application/json" },
         body: payload === undefined ? undefined : JSON.stringify(payload),
         signal: controller.signal,
       });
-      const raw = await response.text();
+      const reader = response.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      if (reader) {
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > 100_000) { await reader.cancel(); throw new AdapterError("Target response exceeds 100 KB."); }
+            chunks.push(value);
+          }
+        } finally { reader.releaseLock(); }
+      }
+      const raw = Buffer.concat(chunks).toString("utf8");
       let body: unknown;
       try {
         body = raw ? JSON.parse(raw) : {};
@@ -70,6 +89,13 @@ export class LocalHttpAdapter {
     return [provider.evidence, target.evidence];
   }
 
+  async cleanup(scenarioId: string): Promise<void> {
+    await Promise.all([
+      this.request("Release target fixture", "DELETE", this.targetUrl, `/test/fixture?scenarioId=${encodeURIComponent(scenarioId)}`),
+      this.request("Release provider fixture", "DELETE", this.providerUrl, `/provider/state?scenarioId=${encodeURIComponent(scenarioId)}`),
+    ]);
+  }
+
   async setProviderState(scenarioId: string, state: SubscriptionSnapshot): Promise<HttpEvidence> {
     const result = await this.request("Set authoritative provider state", "POST", this.providerUrl, "/provider/state", { scenarioId, state: SubscriptionSnapshotSchema.parse(state) });
     if (result.status >= 300) throw new AdapterError("Provider emulator rejected the subscription snapshot.", result.evidence);
@@ -92,18 +118,19 @@ export class LocalHttpAdapter {
     return this.request("Deliver simulated billing event", "POST", this.targetUrl, "/webhooks", { scenarioId, event: BillingEventSchema.parse(item), retry });
   }
 
-  async probe(scenarioId: string, featureId: string): Promise<{ allowed: boolean; evidence: HttpEvidence }> {
-    const result = await this.request(`Probe protected ${featureId} operation`, "GET", this.targetUrl, `/protected/${encodeURIComponent(featureId)}?scenarioId=${encodeURIComponent(scenarioId)}`);
+  async probe(scenarioId: string, featureId: string, protectedPath = `/protected/${encodeURIComponent(featureId)}`): Promise<{ allowed: boolean; evidence: HttpEvidence }> {
+    const result = await this.request(`Probe protected ${featureId} operation`, "GET", this.targetUrl, `${protectedPath}?scenarioId=${encodeURIComponent(scenarioId)}`);
     if ((result.status !== 200 && result.status !== 403) || typeof result.body !== "object" || result.body === null || typeof (result.body as { ok?: unknown }).ok !== "boolean") {
       throw new AdapterError("Target returned malformed protected-operation evidence.", result.evidence);
     }
-    return { allowed: result.status === 200 && (result.body as { ok: boolean }).ok, evidence: result.evidence };
+    if ((result.body as { ok: boolean }).ok !== (result.status === 200)) throw new AdapterError("Protected-operation status contradicts its response body.", result.evidence);
+    return { allowed: result.status === 200, evidence: result.evidence };
   }
 
   async effectCount(scenarioId: string): Promise<{ count: number; evidence: HttpEvidence }> {
     const result = await this.request("Read protected side-effect count", "GET", this.targetUrl, `/test/effects?scenarioId=${encodeURIComponent(scenarioId)}`);
     const count = typeof result.body === "object" && result.body !== null ? (result.body as { creditGrantCount?: unknown }).creditGrantCount : undefined;
-    if (result.status >= 300 || typeof count !== "number" || !Number.isInteger(count)) throw new AdapterError("Target returned malformed side-effect evidence.", result.evidence);
+    if (result.status >= 300 || typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) throw new AdapterError("Target returned malformed side-effect evidence.", result.evidence);
     return { count, evidence: result.evidence };
   }
 }

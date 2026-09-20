@@ -4,7 +4,7 @@
 
 The MVP is one straightforward Next.js App Router dashboard plus a separately launched Node HTTP sample target. The target hosts a local provider emulator on a different loopback port. It never imports the checker policy evaluator: the checker calculates expected access independently, while the target has its own deliberately simple entitlement logic. This duplication is intentional test isolation, not a production recommendation.
 
-Persistence is a validated JSON document with atomic replace. It keeps project rules, scenarios, run evidence, and results after a restart without a native SQLite dependency. Trade-off: there is no multi-process locking, query engine, encryption, or production durability story. A future SQLite/Postgres store should preserve the same repository interface.
+Persistence is a validated JSON document with a cross-process filesystem lock, flushed private temporary files, and atomic replacement. Bulk imports commit together, stale policy edits are rejected, and corruption is surfaced without resetting data. The scope is one operator on a local disk; there is no query engine, encryption, multi-host coordination, or built-in backup service. See README.md for backup and crash-lock recovery.
 
 ## Local topology
 
@@ -30,7 +30,9 @@ The `LocalHttpAdapter` implements this small test-target contract. A real adapte
 | Probe access | `GET :4100/protected/:feature` | Performs a protected operation instead of trusting an entitlement claim. |
 | Read effect count | `GET :4100/test/effects` | Detects duplicate credits/audit effects even when access is unchanged. |
 
-Every operation has a two-second timeout, validates JSON, and retains only small redacted response bodies. The target uses an isolated scenario/customer namespace. A target must return a non-2xx response for denied protected operations.
+Every operation defaults to a two-second timeout within a 60-second run deadline, validates JSON, and retains only small redacted response bodies. A new UUID fixture namespace isolates every run, including simultaneous runs of the same scenario. Cleanup deletes both target and provider fixtures. The adapter rejects contradictory status/body results, redirects, non-loopback origins, and responses over 100 KB. A denied protected operation must return HTTP 403 with `ok: false`.
+
+Reports retain an immutable copy of project and scenario inputs. CLI `--report` uses these inputs; `--scenario` uses current saved state. Imported assertions are evaluated, and a run without access/effect checks cannot pass. All dashboard data is protected by local Host/Origin checks; the sample services enforce the same boundary. `npm start` binds to loopback and is not a public deployment command.
 
 ## Event and consistency model
 

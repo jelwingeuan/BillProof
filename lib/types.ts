@@ -34,9 +34,16 @@ export const ProjectSchema = z.object({
   name: z.string().min(1),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
-  plans: z.array(PlanSchema).min(1),
-  features: z.array(FeatureSchema).min(1),
+  plans: z.array(PlanSchema).min(1).max(30),
+  features: z.array(FeatureSchema).min(1).max(50),
   policy: EntitlementPolicySchema,
+}).superRefine((project, context) => {
+  const features = new Set(project.features.map((feature) => feature.id));
+  if (features.size !== project.features.length || new Set(project.plans.map((plan) => plan.id)).size !== project.plans.length) context.addIssue({ code: "custom", message: "Plan and feature IDs must be unique." });
+  if (!project.plans.some((plan) => plan.id === "free")) context.addIssue({ code: "custom", message: "An explicit free plan is required." });
+  for (const plan of project.plans) {
+    if (new Set(plan.featureIds).size !== plan.featureIds.length || plan.featureIds.some((id) => !features.has(id))) context.addIssue({ code: "custom", message: `Plan ${plan.id} has duplicate or unknown features.` });
+  }
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
@@ -110,8 +117,8 @@ export const ScenarioSchema = z.object({
   seed: z.string().min(1),
   customerId: z.string().min(1),
   startAt: z.string().datetime(),
-  steps: z.array(ScenarioStepSchema).min(1),
-  assertions: z.array(AssertionSchema),
+  steps: z.array(ScenarioStepSchema).min(1).max(100),
+  assertions: z.array(AssertionSchema).max(50),
   tags: z.array(z.string().min(1)),
 });
 export type Scenario = z.infer<typeof ScenarioSchema>;
@@ -171,6 +178,7 @@ export const ScenarioRunSchema = z.object({
   evidence: z.array(HttpEvidenceSchema),
   error: z.string().optional(),
   reproductionCommand: z.string(),
+  inputs: z.object({ project: ProjectSchema, scenario: ScenarioSchema }).optional(),
 });
 export type ScenarioRun = z.infer<typeof ScenarioRunSchema>;
 

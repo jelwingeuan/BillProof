@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { BillingEventSchema, ProjectSchema, SubscriptionSnapshotSchema, type Project, type SubscriptionSnapshot, type TargetMode } from "../lib/types";
+import { localRequestError } from "../lib/local-boundary";
 
 type TargetFixture = {
   mode: TargetMode;
@@ -12,8 +13,6 @@ type TargetFixture = {
   creditGrantCount: number;
 };
 
-const providerFixtures = new Map<string, SubscriptionSnapshot>();
-const targetFixtures = new Map<string, TargetFixture>();
 
 function send(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
@@ -48,13 +47,15 @@ function sampleTargetFeatures(project: Project, snapshot: SubscriptionSnapshot, 
     const behavior = snapshot.cancellationBehavior ?? project.policy.cancellationDefault;
     usePaidPlan = Boolean(behavior === "period_end" && snapshot.currentPeriodEnd && Date.parse(at) < Date.parse(snapshot.currentPeriodEnd));
   }
+  if (snapshot.status === "trialing" && snapshot.trialEndsAt && Date.parse(at) >= Date.parse(snapshot.trialEndsAt)) usePaidPlan = false;
+  if (snapshot.cancelAtPeriodEnd && snapshot.currentPeriodEnd && Date.parse(at) >= Date.parse(snapshot.currentPeriodEnd)) usePaidPlan = false;
   return (usePaidPlan ? paidPlan : freePlan).featureIds;
 }
 
-async function reconcile(fixtureKey: string, providerUrl: string): Promise<void> {
+async function reconcile(fixtureKey: string, providerUrl: string, targetFixtures: Map<string, TargetFixture>): Promise<void> {
   const fixture = targetFixtures.get(fixtureKey);
   if (!fixture) return;
-  const response = await fetch(`${providerUrl}/provider/state?scenarioId=${encodeURIComponent(fixtureKey)}`);
+  const response = await fetch(`${providerUrl}/provider/state?scenarioId=${encodeURIComponent(fixtureKey)}`, { signal: AbortSignal.timeout(2_000), redirect: "error" });
   if (response.status === 404) return;
   if (!response.ok) throw new Error(`Provider read failed with ${response.status}.`);
   const payload = await response.json();
@@ -80,9 +81,25 @@ export async function startSampleTarget(options: { targetPort?: number; provider
   providerUrl: string;
   stop: () => Promise<void>;
 }> {
+  const providerFixtures = new Map<string, SubscriptionSnapshot>();
+  const targetFixtures = new Map<string, TargetFixture>();
+  function guard(request: IncomingMessage): string | undefined {
+    const headers = new Headers();
+    for (const name of ["host", "origin", "sec-fetch-site"]) {
+      const value = request.headers[name];
+      if (typeof value === "string") headers.set(name, value);
+    }
+    return localRequestError(new Request("http://127.0.0.1", { headers }));
+  }
   const provider = createServer(async (request, response) => {
     try {
+      const error = guard(request);
+      if (error) return send(response, 403, { error });
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (request.method === "DELETE" && url.pathname === "/provider/state") {
+        providerFixtures.delete(keyFrom(request) ?? "");
+        return send(response, 200, { ok: true });
+      }
       if (request.method === "POST" && url.pathname === "/provider/reset") {
         const body = await json(request) as { scenarioId?: unknown };
         if (typeof body.scenarioId !== "string") return send(response, 400, { error: "scenarioId is required" });
@@ -112,7 +129,13 @@ export async function startSampleTarget(options: { targetPort?: number; provider
 
   const target = createServer(async (request, response) => {
     try {
+      const error = guard(request);
+      if (error) return send(response, 403, { error });
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (request.method === "DELETE" && url.pathname === "/test/fixture") {
+        targetFixtures.delete(keyFrom(request) ?? "");
+        return send(response, 200, { ok: true });
+      }
       if (request.method === "GET" && url.pathname === "/health") {
         return send(response, 200, {
           ok: true,
@@ -138,7 +161,7 @@ export async function startSampleTarget(options: { targetPort?: number; provider
         const fixture = typeof body.scenarioId === "string" ? targetFixtures.get(body.scenarioId) : undefined;
         if (!fixture || typeof body.at !== "string" || Number.isNaN(Date.parse(body.at))) return send(response, 400, { error: "Known scenarioId and ISO UTC at are required" });
         fixture.now = new Date(body.at).toISOString();
-        if (fixture.mode === "corrected") await reconcile(body.scenarioId as string, providerUrl);
+        if (fixture.mode === "corrected") await reconcile(body.scenarioId as string, providerUrl, targetFixtures);
         return send(response, 200, { ok: true, at: fixture.now });
       }
       if (request.method === "POST" && url.pathname === "/webhooks") {
@@ -153,7 +176,7 @@ export async function startSampleTarget(options: { targetPort?: number; provider
         }
         if (fixture.mode === "corrected" && fixture.processedEventIds.has(item.id)) return send(response, 200, { ok: true, deduplicated: true });
         if (fixture.mode === "corrected") {
-          await reconcile(body.scenarioId as string, providerUrl);
+          await reconcile(body.scenarioId as string, providerUrl, targetFixtures);
           fixture.processedEventIds.add(item.id);
         } else {
           // Deliberate demo fault: apply the received historical snapshot, regardless of current provider state or duplicate ID.
@@ -183,7 +206,9 @@ export async function startSampleTarget(options: { targetPort?: number; provider
       return send(response, 500, { error: error instanceof Error ? error.message : "Sample target error" });
     }
   });
-  const targetPort = await listen(target, options.targetPort ?? Number(process.env.BILLPROOF_TARGET_PORT ?? 4100));
+  let targetPort: number;
+  try { targetPort = await listen(target, options.targetPort ?? Number(process.env.BILLPROOF_TARGET_PORT ?? 4100)); }
+  catch (error) { await new Promise<void>((resolve) => provider.close(() => resolve())); throw error; }
   const targetUrl = `http://127.0.0.1:${targetPort}`;
 
   return {

@@ -27,3 +27,21 @@ test("malformed evidence and timeout are execution errors, never passes", async 
   await assert.rejects(() => timeoutAdapter.probe("fixture", "api"), AdapterError);
   await slow.stop();
 });
+
+test("contradictory status bodies, oversized responses and redirects are rejected", async () => {
+  let requestedPath = "";
+  const configured = await server((request, response) => { requestedPath = request.url!; response.writeHead(200); response.end('{"ok":true}'); });
+  try {
+    await new LocalHttpAdapter({ targetUrl: configured.url, timeoutMs: 100 }).probe("fixture", "api", "/custom-api");
+    assert.equal(requestedPath, "/custom-api?scenarioId=fixture");
+  } finally { await configured.stop(); }
+  const contradictory = await server((_request, response) => { response.writeHead(403); response.end('{"ok":true}'); });
+  try { await assert.rejects(new LocalHttpAdapter({ targetUrl: contradictory.url, timeoutMs: 100 }).probe("fixture", "api"), /contradicts/); }
+  finally { await contradictory.stop(); }
+  const oversized = await server((_request, response) => { response.writeHead(200); response.end(JSON.stringify({ ok: true, padding: "x".repeat(100_001) })); });
+  try { await assert.rejects(new LocalHttpAdapter({ targetUrl: oversized.url, timeoutMs: 100 }).probe("fixture", "api"), /exceeds 100 KB/); }
+  finally { await oversized.stop(); }
+  const redirect = await server((_request, response) => { response.writeHead(302, { location: "http://example.com" }); response.end(); });
+  try { await assert.rejects(new LocalHttpAdapter({ targetUrl: redirect.url, timeoutMs: 100 }).probe("fixture", "api"), AdapterError); }
+  finally { await redirect.stop(); }
+});
