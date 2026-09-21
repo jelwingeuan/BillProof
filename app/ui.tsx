@@ -16,7 +16,7 @@ const tabs: { id: Tab; label: string; hint: string; marker: string }[] = [
   { id: "overview", label: "Overview", hint: "Evidence & findings", marker: "01" },
   { id: "setup", label: "Policy", hint: "Plans & access rules", marker: "02" },
   { id: "scenarios", label: "Scenarios", hint: "Lifecycle checks", marker: "03" },
-  { id: "integration", label: "Integration", hint: "Local target contract", marker: "04" },
+  { id: "integration", label: "Connection", hint: "Setup & local target", marker: "04" },
 ];
 
 function statusClass(status: ScenarioRun["status"]): string { return `pill pill-${status}`; }
@@ -47,6 +47,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   const [runningScenarioId, setRunningScenarioId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(state.runs[0]?.id ?? null);
   const [notice, setNotice] = useState("");
+  const [comparison, setComparison] = useState<ScenarioRun[]>([]);
   const [importText, setImportText] = useState("");
   const [scenarioQuery, setScenarioQuery] = useState("");
   const [health, setHealth] = useState<HealthState>({ state: "checking" });
@@ -54,6 +55,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   const suiteStopRequested = useRef(false);
   const actionBusy = useRef(false);
   const saveBusy = useRef(false);
+  const focusReport = useRef(false);
   const [saving, setSaving] = useState(false);
 
   const project = state.projects[0];
@@ -72,6 +74,14 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     void fetchHealthState().then((result) => { if (active) setHealth(result); });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (tab !== "overview" || !focusReport.current) return;
+    const report = document.getElementById("run-report");
+    report?.scrollIntoView({ block: "start" });
+    report?.focus({ preventScroll: true });
+    focusReport.current = false;
+  }, [tab, selectedRunId]);
 
   async function executeScenario(scenarioId: string, targetMode: TargetMode): Promise<ScenarioRun> {
     const response = await fetch("/api/run", {
@@ -92,6 +102,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     setRunningScenarioId(scenarioId); setNotice("");
     try {
       const run = await executeScenario(scenarioId, mode);
+      focusReport.current = true;
       setSelectedRunId(run.id); setTab("overview");
       setNotice(run.status === "pass"
         ? "Scenario passed with protected-operation evidence."
@@ -108,10 +119,12 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   async function compareModes(scenarioId: string): Promise<void> {
     if (actionBusy.current || saveBusy.current) return;
     actionBusy.current = true;
+    setComparison([]);
     setRunningScenarioId(scenarioId); setNotice("Running the same scenario and seed against both demo behaviors…");
     try {
       const naive = await executeScenario(scenarioId, "naive");
       const corrected = await executeScenario(scenarioId, "corrected");
+      setComparison([naive, corrected]);
       setSelectedRunId(corrected.id); setTab("overview");
       setNotice(`Comparison complete: naive ${naive.status}, corrected ${corrected.status}. Both reports use seed ${corrected.seed}.`);
     } catch (error) {
@@ -208,6 +221,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   }
 
   return <main className="app-shell">
+    <a className="skip-link" href="#workspace-content">Skip to workspace</a>
     <header className="app-topbar">
       <div className="brand-lockup"><span className="brand-mark" aria-hidden>◆</span><div><strong>BillProof</strong><span>Local access verifier</span></div></div>
       <div className="topbar-meta"><span className="simulation-label">Simulated billing</span><HealthBadge health={health} onRefresh={() => void checkHealth()} /></div>
@@ -217,16 +231,17 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
       <nav aria-label="BillProof sections" className="side-nav desktop-nav">
         <div className="side-nav-heading">Workspace</div>
         {tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} aria-current={tab === item.id ? "page" : undefined} className="nav-button"><span className="nav-marker">{item.marker}</span><span><strong>{item.label}</strong><small>{item.hint}</small></span></button>)}
-        <div className="side-note"><span aria-hidden>◌</span><div><strong>Bounded local test</strong><small>2s operation deadline</small></div></div>
+        <div className="side-note"><span aria-hidden>◌</span><div><strong>Your local workspace</strong><small>Sample data · saved on this device</small></div></div>
       </nav>
 
-      <section className="content-column">
+      <section className="content-column" id="workspace-content" tabIndex={-1}>
         <nav aria-label="BillProof mobile sections" className="mobile-nav">{tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} aria-current={tab === item.id ? "page" : undefined}>{item.label}</button>)}</nav>
-        {notice && <div role="status" className="notice"><span aria-hidden>●</span>{notice}</div>}
+        {notice && <div role="status" className="notice"><span aria-hidden>●</span><span>{notice}</span><button aria-label="Dismiss notification" onClick={() => setNotice("")}>×</button></div>}
 
         {tab === "overview" && <Overview
           busy={Boolean(runningScenarioId) || saving}
           runs={state.runs} failures={failures} scenarios={scenarioById} selectedRun={selectedRun} health={health}
+          comparison={comparison}
           onSelectRun={(run) => setSelectedRunId(run.id)} onRefreshHealth={() => void checkHealth()}
           onCompareDemo={() => void compareModes("stale-pre-cancellation")} onBrowse={() => setTab("scenarios")}
         />}
@@ -250,20 +265,26 @@ function HealthBadge({ health, onRefresh }: { health: HealthState; onRefresh: ()
   return <button className={`health-badge health-${health.state}`} onClick={onRefresh} aria-label={`${label}. Refresh readiness.`}><span aria-hidden>●</span>{label}</button>;
 }
 
-function Overview({ runs, failures, scenarios, selectedRun, health, onSelectRun, onRefreshHealth, onCompareDemo, onBrowse, busy }: {
+function Overview({ runs, failures, scenarios, selectedRun, health, comparison, onSelectRun, onRefreshHealth, onCompareDemo, onBrowse, busy }: {
   busy: boolean;
   runs: ScenarioRun[]; failures: ScenarioRun[]; scenarios: Map<string, Scenario>; selectedRun?: ScenarioRun; health: HealthState;
+  comparison: ScenarioRun[];
   onSelectRun: (run: ScenarioRun) => void; onRefreshHealth: () => void; onCompareDemo: () => void; onBrowse: () => void;
 }) {
   const latest = runs[0];
   const [visibleCount, setVisibleCount] = useState(10);
+  const [query, setQuery] = useState("");
+  const [resultFilter, setResultFilter] = useState("all");
+  const filtered = runs.filter((run) => (resultFilter === "all" || run.status === resultFilter) && `${run.scenarioTitle} ${run.targetMode}`.toLowerCase().includes(query.trim().toLowerCase()));
   return <div className="content-stack">
     <section className="hero-panel">
-      <div><p className="eyebrow">Release confidence / local proof</p><h1>Catch incorrect customer access before release.</h1><p>Replay billing lifecycles, probe protected operations, and leave with evidence your team can reproduce.</p><div className="hero-actions"><button className="btn btn-primary" onClick={onCompareDemo} disabled={busy}>{busy ? "Check in progress…" : "Compare demo targets"}</button><button className="btn btn-secondary" onClick={onBrowse}>Browse {scenarios.size} scenarios</button></div></div>
-      <div className="proof-card"><div className="proof-icon" aria-hidden>✓</div><strong>Same scenario. Same seed.</strong><span>Compare a stale-event failure with the reconciled reference behavior.</span><code>stale-pre-cancellation</code></div>
+      <div><p className="eyebrow">Subscription access checks</p><h1>Does access match the subscription?</h1><p>Test cancellations, failed payments, and upgrades. See what should happen, what actually happened, and where they differ.</p><div className="hero-actions"><button className="btn btn-primary" onClick={onCompareDemo} disabled={busy || health.state !== "ready"}>{busy ? "Comparing targets…" : "Compare demo targets"}</button><button className="btn btn-secondary" onClick={onBrowse}>Browse {scenarios.size} scenarios</button>{runs.length > 0 && <a className="hero-history-link" href="#run-history">Saved reports ↓</a>}</div><p className="hero-caption">Local simulation · no billing account or credentials needed</p></div>
+      <ol className="getting-started" aria-label="Your first check"><li><span>01</span><div><strong>{health.state === "ready" ? "Target connected" : "Start the sample target"}</strong><small>{health.state === "ready" ? "Ready for local checks" : "Run npm run target in a terminal"}</small></div></li><li><span>02</span><div><strong>Compare both behaviors</strong><small>One flawed target, one corrected target</small></div></li><li><span>03</span><div><strong>Review the evidence</strong><small>Download a report you can replay</small></div></li></ol>
     </section>
 
-    {health.state === "offline" && <section className="offline-banner"><div><strong>Local target is not reachable.</strong><p>{health.detail ?? "Start npm run target before running a check."}</p></div><button className="btn btn-secondary" onClick={onRefreshHealth}>Check again</button></section>}
+    {health.state === "offline" && <section className="offline-banner"><div><strong>Start the target to enable checks</strong><p>In another terminal, open the BillProof folder and run <code>npm run target</code>. Keep it running, then check the connection.</p><details><summary>Connection details</summary><p>{health.detail}</p></details></div><button className="btn btn-secondary" onClick={onRefreshHealth}>Check connection</button></section>}
+
+    {comparison.length > 0 && <section className="card section-card" aria-label="Comparison results"><div className="section-heading compact"><div><p className="eyebrow">Same scenario · both behaviors</p><h2>Compare the outcomes</h2><p>{comparison[0].scenarioTitle}</p></div></div><div className="comparison-grid">{comparison.map((run) => <a href="#run-report" className={`comparison-result ${selectedRun?.id === run.id ? "is-selected" : ""}`} key={run.id} onClick={() => onSelectRun(run)}><div><strong>{run.targetMode === "naive" ? "Intentionally flawed" : "Corrected reference"}</strong><Status status={run.status} /></div><span>{run.status === "error" ? "Check could not finish" : `${run.findings.length} findings · ${run.observations.length} access checks`}</span><small>View report →</small></a>)}</div></section>}
 
     <section className="metric-grid" aria-label="Run summary">
       <Metric label="Recorded runs" value={String(runs.length)} note="Persisted local reports" />
@@ -271,12 +292,13 @@ function Overview({ runs, failures, scenarios, selectedRun, health, onSelectRun,
       <Metric label="Latest result" value={latest ? latest.status : "—"} note={latest ? `${latest.targetMode} · ${date(latest.completedAt)}` : "No run recorded"} tone={latest?.status === "pass" ? "green" : latest ? "red" : undefined} />
     </section>
 
-    <section className="card section-card">
-      <div className="section-heading"><div><p className="eyebrow">Evidence ledger</p><h2>Recent local runs</h2><p>Every row is a persisted runner report, including deliberate demo failures.</p></div><button className="btn btn-secondary" onClick={onBrowse}>New check</button></div>
-      {runs.length === 0 ? <Empty text="No runs yet. Start the sample target, then compare the demo targets." /> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Scenario</th><th>Behavior</th><th>Result</th><th>Findings</th><th>Evidence</th><th>Completed (UTC)</th></tr></thead><tbody>{runs.slice(0, visibleCount).map((run) => <tr key={run.id} className={selectedRun?.id === run.id ? "selected-row" : undefined}><td><button className="table-link" onClick={() => onSelectRun(run)}>{run.scenarioTitle}</button><small>{run.seed}</small></td><td className="capitalize">{run.targetMode}</td><td><Status status={run.status} /></td><td>{run.findings.length}</td><td>{run.evidence.length} records</td><td>{date(run.completedAt)}</td></tr>)}</tbody></table></div>}
-    </section>
-    {runs.length > visibleCount && <button className="btn btn-secondary" onClick={() => setVisibleCount((count) => count + 10)}>Show more reports ({runs.length - visibleCount} remaining)</button>}
     {selectedRun && <RunDetail key={selectedRun.id} run={selectedRun} />}
+    <section className="card section-card" id="run-history" aria-label="Run history">
+      <div className="section-heading"><div><p className="eyebrow">Saved on this device</p><h2>Run history</h2><p>Open a report to inspect or replay a previous check.</p></div><button className="btn btn-secondary" onClick={onBrowse}>New check</button></div>
+      {runs.length > 0 && <div className="history-filters"><label><span className="label">Find a report</span><input type="search" className="control" placeholder="Search scenario or behavior…" value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(10); }} /></label><label><span className="label">Result</span><select className="control" value={resultFilter} onChange={(event) => { setResultFilter(event.target.value); setVisibleCount(10); }}><option value="all">All results</option><option value="fail">Findings</option><option value="error">Errors</option><option value="pass">Passed</option><option value="skipped">Skipped</option></select></label><span role="status">{filtered.length} reports</span></div>}
+      {runs.length === 0 ? <Empty text="Your first report will appear here. Start with Compare demo targets above." /> : filtered.length === 0 ? <div className="empty-state"><p>No reports match these filters.</p><button className="btn btn-secondary" onClick={() => { setQuery(""); setResultFilter("all"); }}>Clear filters</button></div> : <ul className="history-list">{filtered.slice(0, visibleCount).map((run) => <li key={run.id}><a href="#run-report" aria-current={selectedRun?.id === run.id ? "true" : undefined} onClick={() => onSelectRun(run)}><div className="history-title"><strong>{run.scenarioTitle}</strong><span>{run.targetMode} · {date(run.completedAt)} UTC</span></div><span className="history-findings">{run.findings.length} findings{run.warnings?.length ? " · cleanup warning" : ""}</span><Status status={run.status} /><span aria-hidden>↗</span></a></li>)}</ul>}
+      {filtered.length > visibleCount && <button className="btn btn-secondary mt-4" onClick={() => setVisibleCount((count) => count + 10)}>Show 10 more reports</button>}
+    </section>
   </div>;
 }
 
@@ -307,11 +329,11 @@ function Scenarios({ scenarios, selected, mode, running, suite, query, importTex
   const visibleSelection = filtered.find((item) => item.id === selected?.id) ?? filtered[0];
   const suiteBusy = suite.status === "running" || suite.status === "stopping";
   const percent = suite.total ? Math.round((suite.completed / suite.total) * 100) : 0;
-  return <div className="content-stack"><PageHeading eyebrow="Scenario catalogue" title="Exercise the lifecycle, not just the webhook" description="Events and provider state are simulated; every protected-operation observation is a real local HTTP interaction." />
-    <section className="card run-toolbar"><div><label className="label" htmlFor="target-mode">Target behavior</label><select id="target-mode" className="control" disabled={Boolean(running)} value={mode} onChange={(event) => onMode(event.target.value as TargetMode)}><option value="naive">Naive — intentionally flawed</option><option value="corrected">Corrected — reconciled reference</option></select></div><div className="toolbar-status"><span className={`service-dot service-${health.state}`} aria-hidden>●</span><strong>{health.state === "ready" ? "Target ready" : health.state === "offline" ? "Target offline" : "Checking target"}</strong><small>Runs still produce an error report when setup is unavailable.</small></div><div className="toolbar-actions">{suiteBusy ? <button className="btn btn-danger" onClick={onStopSuite} disabled={suite.status === "stopping"}>{suite.status === "stopping" ? "Stopping after current…" : "Stop after current"}</button> : <button className="btn btn-secondary" onClick={onSuite} disabled={Boolean(running)}>Run full suite</button>}</div></section>
-    {suite.status !== "idle" && <section className="suite-progress" aria-live="polite"><div><strong>{suite.status === "complete" ? "Suite complete" : suite.status === "cancelled" ? "Suite stopped" : suite.status === "error" ? "Suite interrupted" : suite.status === "stopping" ? "Stopping after current run" : "Suite running"}</strong><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" aria-label={`${percent}% complete`}><span style={{ width: `${percent}%` }} /></div></section>}
-    <div className="scenario-layout"><section><div className="scenario-filter"><label><span className="sr-only">Search scenarios</span><input className="control" type="search" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search checkout, cancellation, duplicate…" /></label><span>{filtered.length} of {scenarios.length}</span></div><div className="scenario-list">{filtered.map((item) => <button key={item.id} onClick={() => onSelect(item.id)} className={`scenario-card ${visibleSelection?.id === item.id ? "is-selected" : ""}`}><span className="scenario-index">{String(scenarios.indexOf(item) + 1).padStart(2, "0")}</span><span className="scenario-copy"><strong>{item.title}</strong><small>{item.description}</small><span className="tag-row">{item.tags.map((tag) => <em key={tag}>{tag}</em>)}</span></span>{item.tags.includes("demo-failure") && <span className="pill pill-fail">demo fault</span>}</button>)}{filtered.length === 0 && <Empty text="No scenarios match this search." />}</div></section>
-      <aside className="scenario-aside">{visibleSelection && <section className="card selection-card"><p className="eyebrow">Selected scenario</p><h2>{visibleSelection.title}</h2><p>{visibleSelection.description}</p><dl><div><dt>Stable ID</dt><dd><code>{visibleSelection.id}</code></dd></div><div><dt>Seed</dt><dd><code>{visibleSelection.seed}</code></dd></div><div><dt>Steps</dt><dd>{visibleSelection.steps.length}</dd></div></dl><button className="btn btn-primary w-full" disabled={Boolean(running)} onClick={() => onRun(visibleSelection.id)}>{running === visibleSelection.id ? "Running check…" : `Run in ${mode} mode`}</button><button className="btn btn-secondary mt-2 w-full" disabled={Boolean(running)} onClick={() => onCompare(visibleSelection.id)}>Compare naive vs corrected</button></section>}
+  return <div className="content-stack"><PageHeading eyebrow="Scenario catalogue" title="Choose a lifecycle to check" description="Select a scenario, choose the target behavior, and run a check. Compare both behaviors to understand an intentional demo failure." />
+    <section className="card run-toolbar"><div><label className="label" htmlFor="target-mode">Target behavior</label><select id="target-mode" className="control" disabled={Boolean(running)} value={mode} onChange={(event) => onMode(event.target.value as TargetMode)}><option value="naive">Naive — intentionally flawed</option><option value="corrected">Corrected — reconciled reference</option></select></div><div className="toolbar-status"><span className={`service-dot service-${health.state}`} aria-hidden>●</span><strong>{health.state === "ready" ? "Target ready" : health.state === "offline" ? "Target offline" : "Checking target"}</strong><small>{health.state === "ready" ? "Each check saves a report with observed access." : "Start npm run target, then refresh the badge above."}</small></div><div className="toolbar-actions">{suiteBusy ? <button className="btn btn-danger" onClick={onStopSuite} disabled={suite.status === "stopping"}>{suite.status === "stopping" ? "Stopping after current…" : "Stop after current"}</button> : <button className="btn btn-secondary" onClick={onSuite} disabled={Boolean(running) || health.state !== "ready"}>Run full suite</button>}</div></section>
+    {suite.status !== "idle" && <section className="suite-progress" aria-live="polite"><div><strong>{suite.status === "complete" ? "Suite complete" : suite.status === "cancelled" ? "Suite stopped" : suite.status === "error" ? "Suite interrupted" : suite.status === "stopping" ? "Stopping after current run" : "Suite running"}</strong><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" role="progressbar" aria-label="Suite progress" aria-valuenow={suite.completed} aria-valuemin={0} aria-valuemax={suite.total}><span style={{ width: `${percent}%` }} /></div></section>}
+    <div className="scenario-layout"><section><div className="scenario-filter"><label><span className="sr-only">Search scenarios</span><input className="control" type="search" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search checkout, cancellation, duplicate…" /></label><span>{filtered.length} of {scenarios.length}</span></div><div className="scenario-list">{filtered.map((item) => <button key={item.id} onClick={() => onSelect(item.id)} aria-pressed={visibleSelection?.id === item.id} className={`scenario-card ${visibleSelection?.id === item.id ? "is-selected" : ""}`}><span className="scenario-index">{String(scenarios.indexOf(item) + 1).padStart(2, "0")}</span><span className="scenario-copy"><strong>{item.title}</strong><small>{item.description}</small><span className="tag-row">{item.tags.map((tag) => <em key={tag}>{tag}</em>)}</span></span>{item.tags.includes("demo-failure") && <span className="pill pill-fail">demo fault</span>}</button>)}{filtered.length === 0 && <Empty text="No scenarios match this search." />}</div></section>
+      <aside className="scenario-aside">{visibleSelection && <section className="card selection-card"><label className="scenario-quick-select"><span className="label">Scenario to run</span><select className="control" value={visibleSelection.id} onChange={(event) => onSelect(event.target.value)}>{filtered.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><p className="eyebrow">Selected scenario</p><h2>{visibleSelection.title}</h2><p>{visibleSelection.description}</p><dl><div><dt>Stable ID</dt><dd><code>{visibleSelection.id}</code></dd></div><div><dt>Seed</dt><dd><code>{visibleSelection.seed}</code></dd></div><div><dt>Steps</dt><dd>{visibleSelection.steps.length}</dd></div></dl><button className="btn btn-primary w-full" disabled={Boolean(running) || health.state !== "ready"} onClick={() => onRun(visibleSelection.id)}>{running === visibleSelection.id ? "Running check…" : `Run in ${mode} mode`}</button><button className="btn btn-secondary mt-2 w-full" disabled={Boolean(running) || health.state !== "ready"} onClick={() => onCompare(visibleSelection.id)}>Compare naive vs corrected</button></section>}
       <details className="card import-card"><summary>Import scenario JSON</summary><p>Paste one scenario or an array. Schema validation runs before local storage.</p><textarea aria-label="Scenario JSON import" className="control mono" value={importText} onChange={(event) => onImportText(event.target.value)} placeholder='{"id":"my-scenario", ...}' /><button className="btn btn-secondary w-full" disabled={!importText.trim() || Boolean(running)} onClick={onImport}>Validate and import</button></details></aside>
     </div>
   </div>;
@@ -320,7 +342,7 @@ function Scenarios({ scenarios, selected, mode, running, suite, query, importTex
 function Integration({ health, onRefresh }: { health: HealthState; onRefresh: () => void }) {
   return <div className="content-stack"><PageHeading eyebrow="Integration guide" title="A small contract with hard local boundaries" description="BillProof resets an isolated fixture, delivers simulated events, then proves access through protected operations." />
     <section className="card connection-card"><div><span className={`connection-icon service-${health.state}`} aria-hidden>●</span><div><strong>{health.state === "ready" ? "Sample target connected" : health.state === "offline" ? "Sample target offline" : "Checking sample target"}</strong><p>{health.state === "ready" ? `Loopback response in ${health.latencyMs ?? "—"}ms.` : health.detail ?? "Checking the fixed loopback target."}</p></div></div><button className="btn btn-secondary" onClick={onRefresh}>Refresh readiness</button></section>
-    <section className="integration-grid"><div className="card section-card"><p className="eyebrow">Start locally</p><h2>Two processes, no credentials</h2><pre className="command-block">cd BillProof{`\n`}npm install{`\n`}npm run target{`\n\n`}# second terminal{`\n`}cd BillProof{`\n`}npm run dev</pre><p className="supporting-copy">The target listens on <code>127.0.0.1:4100</code>; the independent provider emulator listens on <code>127.0.0.1:4101</code>.</p></div><div className="card section-card"><p className="eyebrow">Safety boundary</p><h2>Explicit, isolated, loopback</h2><ul className="check-list"><li>Fixed local target contract</li><li>Namespaced customer fixtures</li><li>Two-second operation deadline</li><li>Redacted response evidence</li></ul></div></section>
+    <section className="integration-grid"><div className="card section-card"><p className="eyebrow">Start locally</p><h2>Two processes, no credentials</h2><pre className="command-block">cd BillProof{`\n`}npm ci{`\n`}npm run target{`\n\n`}# second terminal{`\n`}cd BillProof{`\n`}npm run dev</pre><p className="supporting-copy">The target listens on <code>127.0.0.1:4100</code>; the independent provider emulator listens on <code>127.0.0.1:4101</code>.</p></div><div className="card section-card"><p className="eyebrow">Safety boundary</p><h2>Explicit, isolated, loopback</h2><ul className="check-list"><li>Fixed local target contract</li><li>Namespaced customer fixtures</li><li>Two-second operation deadline</li><li>Inspect evidence before sharing</li></ul></div></section>
     <section className="card section-card"><div className="section-heading compact"><div><h2>Implemented adapter operations</h2><p>A successful delivery is never treated as proof of product access.</p></div></div><div className="contract-grid"><ContractStep number="01" title="Reset fixture" route="POST /test/reset" text="Clear a scenario namespace and choose target behavior." /><ContractStep number="02" title="Set provider state" route=":4101/provider/state" text="Keep authoritative state separate from delivery snapshots." /><ContractStep number="03" title="Deliver and retry" route="POST /webhooks" text="Capture status, attempts, duplicate IDs, and order." /><ContractStep number="04" title="Probe operations" route="GET /protected/:feature" text="Verify what the application really permits." /></div></section>
     <section className="future-banner"><span aria-hidden>!</span><div><strong>Stripe sandbox remains a separate milestone.</strong><p>It requires isolated account association, official test clocks, raw-byte signature verification, API-version pinning, secure secret storage, and staging authorization.</p></div></section>
   </div>;
@@ -336,18 +358,22 @@ function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: 
 
 function RunDetail({ run }: { run: ScenarioRun }) {
   const [copyStatus, setCopyStatus] = useState("");
+  const [onlyMismatches, setOnlyMismatches] = useState(false);
   async function copyCommand() {
     const command = run.inputs ? `npm run cli -- --report \"billproof-${run.scenarioId}-${run.id}.json\"` : run.reproductionCommand;
     try { await navigator.clipboard.writeText(command); setCopyStatus(run.inputs ? "Copied. Download the report, then run beside that file." : "Copied. Legacy reports use current settings."); }
     catch { setCopyStatus(`Copy manually: ${command}`); }
   }
   const mismatches = run.observations.filter((item) => item.observedAllowed !== item.expectedAllowed).length;
-  return <section className="card report-card" aria-label="Run report"><header className="report-header"><div><p className="eyebrow">Run report / {run.id}</p><div className="report-title"><h2>{run.scenarioTitle}</h2><Status status={run.status} /></div><p>{run.targetMode} behavior · seed {run.seed} · completed {date(run.completedAt)} UTC</p></div><div className="report-actions"><a className="btn btn-secondary" href={`/api/export?run=${encodeURIComponent(run.id)}`} download>Download report</a><button className="btn btn-secondary" onClick={() => void copyCommand()}>Copy replay command</button><span role="status">{copyStatus}</span></div></header>
-    <div className="report-metrics"><Metric label="Observations" value={String(run.observations.length)} note="Protected operations" /><Metric label="Mismatches" value={String(mismatches)} note="Expected vs observed" tone={mismatches ? "red" : "green"} /><Metric label="Deliveries" value={String(run.deliveryAttempts.length)} note="In recorded order" /><Metric label="HTTP records" value={String(run.evidence.length)} note="Redacted evidence" /></div>
+  const observations = onlyMismatches ? run.observations.filter((item) => item.observedAllowed !== item.expectedAllowed) : run.observations;
+  const verdict = run.status === "pass" ? "All recorded checks matched the rules." : run.status === "fail" ? `${run.findings.length} finding${run.findings.length === 1 ? " needs" : "s need"} your attention.` : run.status === "error" ? "This check could not finish." : "This check was skipped.";
+  return <section id="run-report" tabIndex={-1} className="card report-card" aria-label="Run report"><header className="report-header"><div><p className="eyebrow">Selected report</p><div className="report-title"><h2>{run.scenarioTitle}</h2><Status status={run.status} /></div><p>{run.targetMode} behavior · completed {date(run.completedAt)} UTC</p></div><div className="report-actions"><a className="btn btn-secondary" href={`/api/export?run=${encodeURIComponent(run.id)}`} download>Download report</a><button className="btn btn-secondary" onClick={() => void copyCommand()}>Copy replay command</button><span role="status">{copyStatus}</span></div></header>
+    <div className={`report-verdict verdict-${run.status}`}><strong>{verdict}</strong><p>{run.status === "pass" ? "This result covers this scenario and policy. Explore other lifecycle checks for broader coverage." : run.status === "fail" ? run.targetMode === "naive" ? "This target is intentionally flawed. Compare with the corrected reference to see the difference." : "Review the findings and expected access below, then replay the report to investigate." : run.status === "error" ? "An incomplete run is not a pass. Check the error and your local connection before retrying." : "No verification result is available for this run."}</p></div>
+    <div className="report-metrics"><Metric label="Observations" value={String(run.observations.length)} note="Protected operations" /><Metric label="Mismatches" value={String(mismatches)} note="Expected vs observed" tone={mismatches ? "red" : "green"} /><Metric label="Deliveries" value={String(run.deliveryAttempts.length)} note="In recorded order" /><Metric label="HTTP records" value={String(run.evidence.length)} note="Captured responses" /></div>
     {run.error && <div className="error-banner"><strong>Execution error</strong><span>{run.error}</span></div>}
     {run.warnings?.map((warning, index) => <div className="error-banner" role="status" key={index}><strong>Cleanup warning</strong><span>{warning}</span></div>)}
     {run.findings.length > 0 && <section className="report-section"><div className="section-heading compact"><div><p className="eyebrow">Requires attention</p><h3>{run.findings.length} access finding{run.findings.length === 1 ? "" : "s"}</h3></div></div><div className="finding-grid">{run.findings.map((finding) => <article key={finding.id} className="finding-card"><div><span className="pill pill-fail">{finding.severity}</span><code>{finding.featureId ?? "side effect"}</code></div><h4>{finding.title}</h4><p><strong>Expected:</strong> {finding.expected}<br /><strong>Observed:</strong> {finding.observed}</p><p><strong>Hypothesis:</strong> {finding.rootCauseHypothesis.replace(/^Hypothesis:\s*/i, "")}</p><p><strong>Suggested fix:</strong> {finding.suggestedFix}</p></article>)}</div></section>}
-    <section className="report-section"><div className="section-heading compact"><div><p className="eyebrow">Access matrix</p><h3>Expected versus observed</h3></div></div><div className="table-wrap"><table className="data-table access-table"><thead><tr><th>Checkpoint / virtual time</th><th>Feature</th><th>Expected</th><th>Observed</th><th>Evidence</th></tr></thead><tbody>{run.observations.length === 0 ? <tr><td colSpan={5}>No observations were reached.</td></tr> : run.observations.map((item, index) => <tr key={`${item.checkpoint}-${item.featureId}-${index}`} className={item.expectedAllowed !== item.observedAllowed ? "mismatch-row" : undefined}><td>{item.checkpoint}<small>{item.observedAt}</small></td><td><code>{item.featureId}</code></td><td><AccessValue allowed={item.expectedAllowed} /></td><td><AccessValue allowed={item.observedAllowed} /></td><td><span className="http-code">{item.httpStatus ?? "—"}</span> {item.evidenceType.replace("_", " ")}</td></tr>)}</tbody></table></div></section>
+    <section className="report-section"><div className="section-heading compact"><div><p className="eyebrow">Access checks</p><h3>Expected versus observed</h3></div>{mismatches > 0 && <button className="btn btn-secondary" aria-pressed={onlyMismatches} onClick={() => setOnlyMismatches(!onlyMismatches)}>{onlyMismatches ? "Show all checks" : `Only mismatches (${mismatches})`}</button>}</div><div className="table-wrap" tabIndex={0} role="region" aria-label="Access checks; scroll horizontally on small screens"><table className="data-table access-table"><thead><tr><th>Checkpoint / virtual time</th><th>Feature</th><th>Expected</th><th>Observed</th><th>Evidence</th></tr></thead><tbody>{observations.length === 0 ? <tr><td colSpan={5}>No observations were reached.</td></tr> : observations.map((item, index) => <tr key={`${item.checkpoint}-${item.featureId}-${index}`} className={item.expectedAllowed !== item.observedAllowed ? "mismatch-row" : undefined}><td>{item.checkpoint}<small>{item.observedAt}</small></td><td><code>{item.featureId}</code></td><td><AccessValue allowed={item.expectedAllowed} /></td><td><AccessValue allowed={item.observedAllowed} /></td><td><span className="http-code">{item.httpStatus ?? "—"}</span> {item.evidenceType.replace("_", " ")}</td></tr>)}</tbody></table></div></section>
     <section className="report-section"><div className="section-heading compact"><div><p className="eyebrow">Delivery timeline</p><h3>Scenario time is separate from arrival order</h3></div></div><div className="timeline">{run.deliveryAttempts.map((item) => <div className="timeline-item" key={item.id}><span>{item.ordinal}</span><div><strong>{item.eventId}</strong><code>{item.deliveredAt}</code></div><div><em>{item.outcome}</em><small>HTTP {item.httpStatus ?? "unreachable"}</small></div></div>)}</div></section>
     <details className="evidence-disclosure"><summary>Inspect HTTP evidence <span>{run.evidence.length} records</span></summary><div className="evidence-list">{run.evidence.map((item, index) => <article key={`${item.label}-${index}`}><div><strong>{item.label}</strong><span>{item.responseStatus ?? "network error"} · {item.elapsedMs}ms</span></div><code>{item.method} {item.url}</code><pre>request: {item.requestSummary || "—"}{`\n`}response: {item.responseBody || "—"}</pre></article>)}</div></details>
   </section>;
