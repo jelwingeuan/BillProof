@@ -14,6 +14,34 @@ import { readState, saveProject, saveScenarios } from "../lib/store";
 import { startSampleTarget } from "../scripts/sample-target";
 import { GET as health } from "../app/api/health/route";
 
+test("scenario customers must match billing snapshots before import or execution", async () => {
+  const path = join(await mkdtemp(join(tmpdir(), "billproof-customer-")), "state.json");
+  const previousPath = process.env.BILLPROOF_DATA_PATH;
+  process.env.BILLPROOF_DATA_PATH = path;
+  try {
+    for (const kind of ["provider_state", "delivery"] as const) {
+      const scenario = structuredClone(DEMO_SCENARIOS[0]);
+      scenario.id = `wrong-customer-${kind.replace("_", "-")}`;
+      const step = scenario.steps.find((item) => item.kind === kind);
+      assert.ok(step);
+      if (step.kind === "provider_state") step.snapshot.customerId = "cus_other";
+      if (step.kind === "delivery") step.event.snapshot.customerId = "cus_other";
+
+      await writeFile(path, JSON.stringify({ version: 1, projects: [demoProject()], scenarios: [scenario], runs: [] }));
+      assert.equal((await readState()).scenarios[0].id, scenario.id, "legacy data must remain readable");
+      await assert.rejects(saveScenarios([scenario]), /customerId must match/);
+
+      const run = await runScenario({ project: demoProject(), scenario, mode: "corrected" });
+      assert.equal(run.status, "error");
+      assert.match(run.error!, /different customer/);
+      assert.equal(run.evidence.length, 0);
+    }
+  } finally {
+    if (previousPath === undefined) delete process.env.BILLPROOF_DATA_PATH;
+    else process.env.BILLPROOF_DATA_PATH = previousPath;
+  }
+});
+
 test("readiness rejects a target connected to a different provider", async () => {
   const target = await startSampleTarget({ targetPort: 0, providerPort: 0 });
   const previousTarget = process.env.BILLPROOF_TARGET_URL;

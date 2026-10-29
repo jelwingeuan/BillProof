@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { demoProject } from "./policy";
 import { DEMO_SCENARIOS } from "./scenarios";
-import { PersistedStateSchema, ProjectSchema, ScenarioRunSchema, ScenarioSchema, type PersistedState, type Project, type Scenario, type ScenarioRun } from "./types";
+import { ImportedScenarioSchema, PersistedStateSchema, ProjectSchema, ScenarioRunSchema, type PersistedState, type Project, type Scenario, type ScenarioRun } from "./types";
 
 function storePath(): string {
   return process.env.BILLPROOF_DATA_PATH ?? join(process.cwd(), "data", "billproof.json");
@@ -90,7 +90,7 @@ export async function saveScenario(scenario: Scenario): Promise<Scenario> {
 }
 
 export async function saveScenarios(scenarios: Scenario[]): Promise<Scenario[]> {
-  const checked = scenarios.map((scenario) => ScenarioSchema.parse(scenario));
+  const checked = scenarios.map((scenario) => ImportedScenarioSchema.parse(scenario));
   if (!checked.length || checked.length > 50 || new Set(checked.map((item) => item.id)).size !== checked.length) throw new Error("Import 1–50 scenarios with unique IDs.");
   await mutateState((state) => {
     for (const scenario of checked) {

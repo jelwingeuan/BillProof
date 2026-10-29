@@ -61,6 +61,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   const saveBusy = useRef(false);
   const focusReport = useRef(false);
   const focusComparison = useRef(false);
+  const focusTabHeading = useRef(false);
   const [saving, setSaving] = useState(false);
 
   const project = state.projects[0];
@@ -95,6 +96,20 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     results?.focus({ preventScroll: true });
     focusComparison.current = false;
   }, [tab, comparison]);
+
+  useEffect(() => {
+    if (!focusTabHeading.current) return;
+    const heading = document.querySelector<HTMLElement>("#workspace-content h1");
+    heading?.focus({ preventScroll: true });
+    document.getElementById("workspace-content")?.scrollIntoView({ block: "start" });
+    focusTabHeading.current = false;
+  }, [tab]);
+
+  function navigateToTab(next: Tab): void {
+    if (tab === next) return;
+    focusTabHeading.current = true;
+    setTab(next);
+  }
 
   async function executeScenario(scenarioId: string, targetMode: TargetMode): Promise<ScenarioRun> {
     const response = await fetch("/api/run", {
@@ -257,12 +272,12 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     <div className="workspace">
       <nav aria-label="BillProof sections" className="side-nav desktop-nav">
         <div className="side-nav-heading">Workspace</div>
-        {tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} aria-current={tab === item.id ? "page" : undefined} className="nav-button"><span className="nav-marker">{item.marker}</span><span><strong>{item.label}</strong><small>{item.hint}</small></span></button>)}
+        {tabs.map((item) => <button key={item.id} onClick={() => navigateToTab(item.id)} aria-current={tab === item.id ? "page" : undefined} className="nav-button"><span className="nav-marker">{item.marker}</span><span><strong>{item.label}</strong><small>{item.hint}</small></span></button>)}
         <div className="side-note"><span aria-hidden>◌</span><div><strong>Your local workspace</strong><small>Sample data · saved on this device</small></div></div>
       </nav>
 
       <section className="content-column" id="workspace-content" tabIndex={-1}>
-        <nav aria-label="BillProof mobile sections" className="mobile-nav">{tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} aria-current={tab === item.id ? "page" : undefined}>{item.label}</button>)}</nav>
+        <nav aria-label="BillProof mobile sections" className="mobile-nav">{tabs.map((item) => <button key={item.id} onClick={() => navigateToTab(item.id)} aria-current={tab === item.id ? "page" : undefined}>{item.label}</button>)}</nav>
         {notice && <div role="status" className="notice"><span aria-hidden>●</span><span>{notice}</span><button aria-label="Dismiss notification" onClick={() => setNotice("")}>×</button></div>}
 
         {tab === "overview" && <Overview
@@ -270,7 +285,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
           runs={state.runs} failures={failures} scenarios={scenarioById} selectedRun={selectedRun} health={health}
           comparison={comparison}
           onSelectRun={(run) => setSelectedRunId(run.id)} onRefreshHealth={() => void checkHealth()}
-          onCompareDemo={() => void compareModes("stale-pre-cancellation")} onBrowse={() => setTab("scenarios")}
+          onCompareDemo={() => void compareModes("stale-pre-cancellation")} onBrowse={() => navigateToTab("scenarios")}
         />}
         {tab === "setup" && <fieldset className="settings-fieldset" disabled={saving || Boolean(runningScenarioId)} aria-busy={saving}><legend className="sr-only">Project settings</legend><p role="status">{saving ? "Saving changes…" : runningScenarioId ? "Settings are locked while a run is active." : "Changes save automatically."}</p><Setup project={project} onPolicy={updatePolicy} onToggle={toggleFeature} /></fieldset>}
         {tab === "scenarios" && <Scenarios
@@ -306,7 +321,7 @@ function Overview({ runs, failures, scenarios, selectedRun, health, comparison, 
   const filtered = runs.filter((run) => (resultFilter === "all" || run.status === resultFilter) && `${run.scenarioTitle} ${run.targetMode}`.toLowerCase().includes(query.trim().toLowerCase()));
   return <div className="content-stack">
     <section className="hero-panel">
-      <div><p className="eyebrow">Subscription access checks</p><h1>Does access match the subscription?</h1><p>Test cancellations, failed payments, and upgrades. See what should happen, what actually happened, and where they differ.</p><div className="hero-actions"><button className="btn btn-primary" onClick={onCompareDemo} disabled={busy || health.state !== "ready"}>{busy ? "Comparing targets…" : "Compare demo targets"}</button><button className="btn btn-secondary" onClick={onBrowse}>Browse {scenarios.size} scenarios</button>{runs.length > 0 && <a className="hero-history-link" href="#run-history">Saved reports ↓</a>}</div><p className="hero-caption">Local simulation · no billing account or credentials needed</p></div>
+      <div><p className="eyebrow">Subscription access checks</p><h1 tabIndex={-1}>Does access match the subscription?</h1><p>Test cancellations, failed payments, and upgrades. See what should happen, what actually happened, and where they differ.</p><div className="hero-actions"><button className="btn btn-primary" onClick={onCompareDemo} disabled={busy || health.state !== "ready"}>{busy ? "Comparing targets…" : "Compare demo targets"}</button><button className="btn btn-secondary" onClick={onBrowse}>Browse {scenarios.size} scenarios</button>{runs.length > 0 && <a className="hero-history-link" href="#run-history">Saved reports ↓</a>}</div><p className="hero-caption">Local simulation · no billing account or credentials needed</p></div>
       <ol className="getting-started" aria-label="Your first check"><li><span>01</span><div><strong>{health.state === "ready" ? "Target connected" : "Start the sample target"}</strong><small>{health.state === "ready" ? "Ready for local checks" : "Run npm run target in a terminal"}</small></div></li><li><span>02</span><div><strong>Compare both behaviors</strong><small>One flawed target, one corrected target</small></div></li><li><span>03</span><div><strong>Review the evidence</strong><small>Download a report you can replay</small></div></li></ol>
     </section>
 
@@ -381,7 +396,7 @@ function ContractStep({ number, title, route, text }: { number: string; title: s
 }
 
 function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
-  return <header className="page-heading"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></header>;
+  return <header className="page-heading"><p className="eyebrow">{eyebrow}</p><h1 tabIndex={-1}>{title}</h1><p>{description}</p></header>;
 }
 
 function RunDetail({ run }: { run: ScenarioRun }) {

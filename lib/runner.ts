@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { expectedAccess } from "./policy";
 import { AdapterError, BILLPROOF_CONTRACT_VERSION, LocalHttpAdapter } from "./http-adapter";
-import type { AccessObservation, DeliveryAttempt, Finding, HttpEvidence, Project, Scenario, ScenarioRun, TargetMode } from "./types";
+import { mismatchedCustomerStep, type AccessObservation, type DeliveryAttempt, type Finding, type HttpEvidence, type Project, type Scenario, type ScenarioRun, type TargetMode } from "./types";
 
 export const BILLPROOF_RUNNER_VERSION = "0.2.0";
 
@@ -51,6 +51,8 @@ export async function runScenario(options: { project: Project; scenario: Scenari
   };
 
   try {
+    const mismatchedStep = mismatchedCustomerStep(scenario);
+    if (mismatchedStep >= 0) throw new Error(`Billing snapshot at step ${mismatchedStep + 1} belongs to a different customer.`);
     adapter = new LocalHttpAdapter({ targetUrl: options.targetUrl, providerUrl: options.providerUrl, timeoutMs: project.policy.convergenceDeadlineMs });
     evidence.push(...await adapter.reset(fixtureId, scenario.customerId, mode, project));
     evidence.push(await adapter.advanceClock(fixtureId, virtualAt));

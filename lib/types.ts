@@ -123,6 +123,17 @@ export const ScenarioSchema = z.object({
 });
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
+export function mismatchedCustomerStep(scenario: Scenario): number {
+  return scenario.steps.findIndex((step) =>
+    (step.kind === "provider_state" && step.snapshot.customerId !== scenario.customerId) ||
+    (step.kind === "delivery" && step.event.snapshot.customerId !== scenario.customerId));
+}
+
+export const ImportedScenarioSchema = ScenarioSchema.superRefine((scenario, context) => {
+  const index = mismatchedCustomerStep(scenario);
+  if (index >= 0) context.addIssue({ code: "custom", path: ["steps", index], message: "Billing snapshot customerId must match the scenario customerId." });
+});
+
 export const AccessObservationSchema = z.object({
   checkpoint: z.string(),
   observedAt: z.string().datetime(),
