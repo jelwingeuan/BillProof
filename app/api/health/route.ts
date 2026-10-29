@@ -10,14 +10,18 @@ export async function GET() {
 
   try {
     const targetUrl = localUrl(process.env.BILLPROOF_TARGET_URL ?? "http://127.0.0.1:4100");
+    const providerUrl = localUrl(process.env.BILLPROOF_PROVIDER_URL ?? "http://127.0.0.1:4101");
     const response = await fetch(`${targetUrl}/health`, {
       cache: "no-store",
       redirect: "error",
       signal: controller.signal,
     });
-    const body = await response.json() as { ok?: unknown; service?: unknown; contractVersion?: unknown };
+    const body = await response.json() as { ok?: unknown; service?: unknown; contractVersion?: unknown; provider?: unknown };
     if (!response.ok || body.ok !== true || body.service !== "billproof-sample-target" || body.contractVersion !== BILLPROOF_CONTRACT_VERSION) {
       throw new Error(`The configured service must implement BillProof contract v${BILLPROOF_CONTRACT_VERSION}.`);
+    }
+    if (body.provider !== providerUrl) {
+      throw new Error("The target uses a different provider. Check BILLPROOF_PROVIDER_URL and restart the target.");
     }
     return Response.json({ ready: true, targetUrl, contractVersion: BILLPROOF_CONTRACT_VERSION, latencyMs: Date.now() - started });
   } catch (error) {

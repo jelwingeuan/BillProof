@@ -12,6 +12,31 @@ import { runScenario } from "../lib/runner";
 import { DEMO_SCENARIOS } from "../lib/scenarios";
 import { readState, saveProject, saveScenarios } from "../lib/store";
 import { startSampleTarget } from "../scripts/sample-target";
+import { GET as health } from "../app/api/health/route";
+
+test("readiness rejects a target connected to a different provider", async () => {
+  const target = await startSampleTarget({ targetPort: 0, providerPort: 0 });
+  const previousTarget = process.env.BILLPROOF_TARGET_URL;
+  const previousProvider = process.env.BILLPROOF_PROVIDER_URL;
+  try {
+    process.env.BILLPROOF_TARGET_URL = target.targetUrl;
+    process.env.BILLPROOF_PROVIDER_URL = "http://127.0.0.1:9";
+    const mismatch = await health();
+    assert.equal(mismatch.status, 503);
+    assert.match((await mismatch.json()).detail, /different provider/);
+
+    process.env.BILLPROOF_PROVIDER_URL = target.providerUrl;
+    const ready = await health();
+    assert.equal(ready.status, 200);
+    assert.equal((await ready.json()).ready, true);
+  } finally {
+    if (previousTarget === undefined) delete process.env.BILLPROOF_TARGET_URL;
+    else process.env.BILLPROOF_TARGET_URL = previousTarget;
+    if (previousProvider === undefined) delete process.env.BILLPROOF_PROVIDER_URL;
+    else process.env.BILLPROOF_PROVIDER_URL = previousProvider;
+    await target.stop();
+  }
+});
 
 test("local boundary rejects rebinding, cross-origin writes, remote targets and oversized JSON", async () => {
   assert.throws(() => localUrl("https://example.com"));

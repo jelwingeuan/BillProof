@@ -1,3 +1,5 @@
+![BillProof logo](public/billproof-mark.svg)
+
 # BillProof local verifier
 
 BillProof checks whether a subscription application's **actual protected operations** match explicit access rules. This MVP is a local, deterministic demonstration. It uses simulated billing events and sample data; it does not connect to Stripe, Supabase, or a customer system.
@@ -84,4 +86,4 @@ If a crash leaves `data/billproof.json.lock`, saves fail safely after five secon
 - **Run shows error:** error is intentional for an unreachable target, timeout, malformed response, or invalid imported scenario; errors are never converted to passes.
 - **Reset the demo data:** stop the dashboard and delete only `BillProof/data/billproof.json`. This removes local BillProof runs and settings.
 
-Read [the product specification](docs/product-spec.md), [architecture](docs/architecture.md), [integration contract v1](docs/integration-contract.md), [scenario matrix](docs/scenario-matrix.md), [roadmap](docs/roadmap.md), and [pilot validation plan](docs/validation-plan.md) before extending the MVP. Contributions are welcome under the [MIT License](LICENSE); see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+Read [the product specification](docs/product-spec.md), [architecture](docs/architecture.md), [integration contract v1](docs/integration-contract.md), [scenario matrix](docs/scenario-matrix.md), [roadmap](docs/roadmap.md), and [pilot validation plan](docs/validation-plan.md) before extending the MVP. Contributions are welcome under the [MIT License](LICENSE); see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). The embedded [React Bits LatticeLoader](components/react-bits/LatticeLoader.tsx) has [separate MIT + Commons Clause terms](components/react-bits/LICENSE.md). The bundled Geist fonts use the [SIL Open Font License](app/fonts/OFL.txt).

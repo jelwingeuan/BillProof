@@ -28,6 +28,30 @@ test("malformed evidence and timeout are execution errors, never passes", async 
   await slow.stop();
 });
 
+test("evidence masks sensitive JSON fields and omits malformed response bodies", async () => {
+  const sensitive = await server((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: true, apiKey: "plain-secret-123", nested: { access_token: "opaque-token-456" }, items: [{ clientSecret: "hidden-789" }], safe: "visible" }));
+  });
+  try {
+    const result = await new LocalHttpAdapter({ targetUrl: sensitive.url, timeoutMs: 500 }).probe("fixture", "api");
+    assert.match(result.evidence.responseBody, /"safe":"visible"/);
+    assert.match(result.evidence.responseBody, /"apiKey":"\[redacted\]"/);
+    assert.match(result.evidence.responseBody, /"access_token":"\[redacted\]"/);
+    assert.match(result.evidence.responseBody, /"clientSecret":"\[redacted\]"/);
+    assert.doesNotMatch(result.evidence.responseBody, /plain-secret-123|opaque-token-456|hidden-789/);
+  } finally { await sensitive.stop(); }
+
+  const malformed = await server((_request, response) => { response.writeHead(200); response.end('{"apiKey":"plain-secret-123"'); });
+  try {
+    await assert.rejects(() => new LocalHttpAdapter({ targetUrl: malformed.url, timeoutMs: 500 }).probe("fixture", "api"), (error) => {
+      assert.ok(error instanceof AdapterError);
+      assert.equal(error.evidence?.responseBody, "[malformed JSON omitted]");
+      return true;
+    });
+  } finally { await malformed.stop(); }
+});
+
 test("contradictory status bodies, oversized responses and redirects are rejected", async () => {
   let requestedPath = "";
   const configured = await server((request, response) => { requestedPath = request.url!; response.writeHead(200); response.end('{"ok":true}'); });

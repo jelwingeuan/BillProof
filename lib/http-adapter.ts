@@ -12,8 +12,12 @@ type HttpResult = { status: number; body: unknown; evidence: HttpEvidence };
 
 export const BILLPROOF_CONTRACT_VERSION = 1;
 
+function sensitiveKey(key: string): boolean {
+  return /(?:apikey|secret|token|password|passwd|authorization|credentials?|privatekey|cookie|signature)$/i.test(key.replace(/[^a-z0-9]/gi, ""));
+}
+
 function redact(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const text = typeof value === "string" ? value : JSON.stringify(value, (key, item) => sensitiveKey(key) ? "[redacted]" : item);
   return text
     .replace(/(?:sk|pk|whsec)_[A-Za-z0-9_]+/g, "[redacted]")
     .replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]")
@@ -68,7 +72,7 @@ export class LocalHttpAdapter {
       try {
         body = raw ? JSON.parse(raw) : {};
       } catch {
-        const evidence = { label, method, url, requestSummary: redact(payload ?? ""), responseStatus: response.status, responseBody: redact(raw), elapsedMs: Date.now() - started };
+        const evidence = { label, method, url, requestSummary: redact(payload ?? ""), responseStatus: response.status, responseBody: "[malformed JSON omitted]", elapsedMs: Date.now() - started };
         throw new AdapterError("Target returned malformed JSON evidence.", evidence);
       }
       if (Date.now() >= observationDeadline) throw new AdapterError("Access convergence deadline exceeded.");
