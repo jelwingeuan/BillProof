@@ -4,6 +4,8 @@
 
 BillProof checks whether a subscription application's **actual protected operations** match explicit access rules. This MVP is a local, deterministic demonstration. It uses simulated billing events and sample data; it does not connect to Stripe, Supabase, or a customer system.
 
+The interface uses [Ranade](https://www.fontshare.com/fonts/ranade) from Fontshare when online, with bundled Geist Sans as its offline fallback. Fontshare serves the Ranade file directly; it is not redistributed in this repository under the ITF Free Font License. Evidence and IDs use bundled Geist Mono.
+
 ## Quick start
 
 Node 24 is the supported runtime for this release (`nvm use` if you use nvm).

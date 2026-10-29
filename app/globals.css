@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: Ranade;
+  src: url("https://cdn.fontshare.com/wf/4I3GQ5RKI7INEN77JLE5K6MUGH3Q6XBQ/OE2GKODT24OQXFQ3ANDXIPBDXBQU4CTJ/4ISE7PRDMUTRGIOEEJAQ6FWTTIGY35CA.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+}
+
 :root {
   --ink: #172033;
   --muted: #65728a;
@@ -25,7 +33,8 @@ body {
   min-width: 320px;
   background: radial-gradient(circle at 85% 0%, #e9efff 0, transparent 28rem), var(--paper);
   color: var(--ink);
-  font-family: var(--font-geist-sans), ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Ranade, var(--font-geist-sans), ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
 }
 button, select, textarea, input { font: inherit; }
 button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus-visible {
