@@ -44,7 +44,7 @@ export async function runScenario(options: { project: Project; scenario: Scenari
 
   const base = {
     id: id("run"), projectId: project.id, scenarioId: scenario.id, scenarioTitle: scenario.title, seed: scenario.seed, targetMode: mode,
-    schemaVersion: 1 as const, runnerVersion: BILLPROOF_RUNNER_VERSION, contractVersion: BILLPROOF_CONTRACT_VERSION as 1,
+    schemaVersion: 1 as const, runnerVersion: BILLPROOF_RUNNER_VERSION, contractVersion: BILLPROOF_CONTRACT_VERSION,
     warnings,
     startedAt, virtualStartAt: scenario.startAt, reproductionCommand: `npm run cli -- --scenario ${scenario.id} --mode ${mode}`,
     inputs: { project: structuredClone(project), scenario: structuredClone(scenario) },

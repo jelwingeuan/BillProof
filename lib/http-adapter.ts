@@ -10,7 +10,7 @@ export class AdapterError extends Error {
 
 type HttpResult = { status: number; body: unknown; evidence: HttpEvidence };
 
-export const BILLPROOF_CONTRACT_VERSION = 1;
+export const BILLPROOF_CONTRACT_VERSION = 2 as const;
 
 function sensitiveKey(key: string): boolean {
   return /(?:apikey|secret|token|password|passwd|authorization|credentials?|privatekey|cookie|signature)$/i.test(key.replace(/[^a-z0-9]/gi, ""));
@@ -135,6 +135,7 @@ export class LocalHttpAdapter {
       throw new AdapterError("Target returned malformed protected-operation evidence.", result.evidence);
     }
     if ((result.body as { ok: boolean }).ok !== (result.status === 200)) throw new AdapterError("Protected-operation status contradicts its response body.", result.evidence);
+    if ((result.body as { featureId?: unknown }).featureId !== featureId) throw new AdapterError("Protected-operation response did not identify the requested feature.", result.evidence);
     return { allowed: result.status === 200, evidence: result.evidence };
   }
 

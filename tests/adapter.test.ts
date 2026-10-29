@@ -31,7 +31,7 @@ test("malformed evidence and timeout are execution errors, never passes", async 
 test("evidence masks sensitive JSON fields and omits malformed response bodies", async () => {
   const sensitive = await server((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ ok: true, apiKey: "plain-secret-123", nested: { access_token: "opaque-token-456" }, items: [{ clientSecret: "hidden-789" }], safe: "visible" }));
+    response.end(JSON.stringify({ ok: true, featureId: "api", apiKey: "plain-secret-123", nested: { access_token: "opaque-token-456" }, items: [{ clientSecret: "hidden-789" }], safe: "visible" }));
   });
   try {
     const result = await new LocalHttpAdapter({ targetUrl: sensitive.url, timeoutMs: 500 }).probe("fixture", "api");
@@ -52,9 +52,33 @@ test("evidence masks sensitive JSON fields and omits malformed response bodies",
   } finally { await malformed.stop(); }
 });
 
+test("protected-operation evidence must identify the feature being probed", async () => {
+  for (const { status, body, protectedPath } of [
+    { status: 200, body: { ok: true, featureId: "dashboard" }, protectedPath: "/protected/dashboard" },
+    { status: 403, body: { ok: false }, protectedPath: "/protected/exports" },
+  ]) {
+    const target = await server((_request, response) => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify(body));
+    });
+    try {
+      await assert.rejects(
+        () => new LocalHttpAdapter({ targetUrl: target.url, timeoutMs: 500 }).probe("fixture", "exports", protectedPath),
+        (error) => {
+          assert.ok(error instanceof AdapterError);
+          assert.match(error.message, /requested feature/);
+          assert.equal(error.evidence?.responseStatus, status);
+          assert.equal(error.evidence?.responseBody, JSON.stringify(body));
+          return true;
+        },
+      );
+    } finally { await target.stop(); }
+  }
+});
+
 test("contradictory status bodies, oversized responses and redirects are rejected", async () => {
   let requestedPath = "";
-  const configured = await server((request, response) => { requestedPath = request.url!; response.writeHead(200); response.end('{"ok":true}'); });
+  const configured = await server((request, response) => { requestedPath = request.url!; response.writeHead(200); response.end('{"ok":true,"featureId":"api"}'); });
   try {
     await new LocalHttpAdapter({ targetUrl: configured.url, timeoutMs: 100 }).probe("fixture", "api", "/custom-api");
     assert.equal(requestedPath, "/custom-api?scenarioId=fixture");

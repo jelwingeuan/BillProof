@@ -19,7 +19,7 @@ test("naive target fails stale evidence, reconciled target passes same seed, dup
     assert.equal(health.status, 200);
     const healthBody = await health.json() as { ok: boolean; service: string; contractVersion: number };
     assert.equal(healthBody.service, "billproof-sample-target");
-    assert.equal(healthBody.contractVersion, 1);
+    assert.equal(healthBody.contractVersion, 2);
 
     const stale = findScenario("stale-pre-cancellation");
     const duplicate = findScenario("duplicate-payment-delivery");
@@ -31,7 +31,7 @@ test("naive target fails stale evidence, reconciled target passes same seed, dup
     assert.ok(naive.observations.some((item) => item.featureId === "exports" && item.expectedAllowed === false && item.observedAllowed === true && item.httpStatus === 200));
     assert.ok(naive.evidence.filter((item) => item.label === "Probe protected exports operation").length > 1);
     assert.equal(naive.schemaVersion, 1);
-    assert.equal(naive.contractVersion, 1);
+    assert.equal(naive.contractVersion, 2);
     assert.equal(naive.runnerVersion, "0.2.0");
 
     const corrected = await runScenario({ project, scenario: stale, mode: "corrected", targetUrl: target.targetUrl, providerUrl: target.providerUrl });
@@ -47,10 +47,12 @@ test("naive target fails stale evidence, reconciled target passes same seed, dup
     assert.deepEqual(retried.deliveryAttempts.map((item) => item.httpStatus), [503, 200]);
 
     await saveRun(corrected);
+    await saveRun({ ...corrected, id: "legacy-v1-run", contractVersion: 1 });
     const edited = { ...demoProject(), policy: { ...demoProject().policy, accessDuringGrace: false } };
     await saveProject(edited);
     const reloaded = await readState();
-    assert.equal(reloaded.runs[0]?.id, corrected.id);
+    assert.equal(reloaded.runs[0]?.contractVersion, 1);
+    assert.equal(reloaded.runs[1]?.id, corrected.id);
     assert.equal(reloaded.projects[0]?.policy.accessDuringGrace, false);
   } finally { await target.stop(); }
 });
@@ -71,13 +73,13 @@ test("convergence accepts delayed access, rejects persistent mismatch and late s
   let behavior: "delayed" | "mismatch" | "late" = "delayed";
   let probes = 0;
   const server = createServer((request, response) => {
-    const send = (status: number, ok: boolean) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify({ ok })); };
+    const send = (status: number, ok: boolean, featureId?: string) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify({ ok, ...(featureId ? { featureId } : {}) })); };
     if (request.method === "DELETE") return send(500, false);
     if (request.url?.startsWith("/protected/")) {
       probes++;
-      if (behavior === "late" && probes > 1) { setTimeout(() => send(200, true), 300); return; }
+      if (behavior === "late" && probes > 1) { setTimeout(() => send(200, true, "dashboard"), 300); return; }
       const allowed = behavior === "delayed" && probes > 1;
-      return send(allowed ? 200 : 403, allowed);
+      return send(allowed ? 200 : 403, allowed, "dashboard");
     }
     send(200, true);
   });

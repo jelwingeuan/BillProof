@@ -9,4 +9,4 @@ BillProof welcomes focused bug fixes, tests, documentation, and lifecycle scenar
 5. Run `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`.
 6. Open a pull request describing the behavior, evidence, and any remaining limit.
 
-Do not include real customer data, credentials, production billing events, or generated `data/billproof.json` files. Contributions to BillProof-authored files are under the [MIT License](LICENSE). Changes to the vendored [React Bits component](components/react-bits/LICENSE.md) and [Geist fonts](app/fonts/OFL.txt) must preserve their separate licenses. Switzer is served by Fontshare; do not commit its font files to this repository.
+Do not include real customer data, credentials, production billing events, or generated `data/billproof.json` files. Contributions to BillProof-authored files are under the [MIT License](LICENSE). Changes to the vendored [React Bits component](components/react-bits/LICENSE.md) and [Geist fonts](app/fonts/OFL.txt) must preserve their separate licenses. Author is served by Fontshare; do not commit its font files to this repository.
