@@ -116,7 +116,9 @@ export class LocalHttpAdapter {
   async getProviderState(scenarioId: string): Promise<{ state: SubscriptionSnapshot; evidence: HttpEvidence }> {
     const result = await this.request("Query authoritative provider state", "GET", this.providerUrl, `/provider/state?scenarioId=${encodeURIComponent(scenarioId)}`);
     if (result.status >= 300 || typeof result.body !== "object" || result.body === null || !("state" in result.body)) throw new AdapterError("Provider state is unavailable.", result.evidence);
-    return { state: SubscriptionSnapshotSchema.parse((result.body as { state: unknown }).state), evidence: result.evidence };
+    const parsed = SubscriptionSnapshotSchema.safeParse((result.body as { state: unknown }).state);
+    if (!parsed.success) throw new AdapterError("Provider returned a malformed subscription snapshot.", result.evidence);
+    return { state: parsed.data, evidence: result.evidence };
   }
 
   async advanceClock(scenarioId: string, at: string): Promise<HttpEvidence> {

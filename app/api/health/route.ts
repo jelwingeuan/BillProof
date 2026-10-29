@@ -17,7 +17,7 @@ export async function GET() {
       signal: controller.signal,
     });
     const body = await response.json() as { ok?: unknown; service?: unknown; contractVersion?: unknown; provider?: unknown };
-    if (!response.ok || body.ok !== true || body.service !== "billproof-sample-target" || body.contractVersion !== BILLPROOF_CONTRACT_VERSION) {
+    if (!response.ok || body.ok !== true || typeof body.service !== "string" || !body.service.trim() || body.contractVersion !== BILLPROOF_CONTRACT_VERSION) {
       throw new Error(`The configured service must implement BillProof contract v${BILLPROOF_CONTRACT_VERSION}.`);
     }
     if (body.provider !== providerUrl) {

@@ -1,7 +1,8 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import { expectedAccess } from "./policy";
 import { AdapterError, BILLPROOF_CONTRACT_VERSION, LocalHttpAdapter } from "./http-adapter";
-import { mismatchedCustomerStep, type AccessObservation, type DeliveryAttempt, type Finding, type HttpEvidence, type Project, type Scenario, type ScenarioRun, type TargetMode } from "./types";
+import { mismatchedCustomerStep, SubscriptionSnapshotSchema, type AccessObservation, type DeliveryAttempt, type Finding, type HttpEvidence, type Project, type Scenario, type ScenarioRun, type TargetMode } from "./types";
 
 export const BILLPROOF_RUNNER_VERSION = "0.2.0";
 
@@ -59,9 +60,9 @@ export async function runScenario(options: { project: Project; scenario: Scenari
 
     for (const step of scenario.steps) {
       if (step.kind === "provider_state") {
-        authoritativeState = step.snapshot;
+        authoritativeState = SubscriptionSnapshotSchema.parse(step.snapshot);
         if (!project.plans.some((plan) => plan.id === step.snapshot.planId) || (step.snapshot.pendingPlanId && !project.plans.some((plan) => plan.id === step.snapshot.pendingPlanId))) throw new Error("Scenario references an unknown plan.");
-        evidence.push(await adapter.setProviderState(fixtureId, step.snapshot));
+        evidence.push(await adapter.setProviderState(fixtureId, authoritativeState));
         evidence.push(await adapter.advanceClock(fixtureId, virtualAt));
       }
       if (step.kind === "advance") {
@@ -78,7 +79,10 @@ export async function runScenario(options: { project: Project; scenario: Scenari
       }
       if (step.kind === "observe") {
         if (!authoritativeState) throw new Error("Scenario attempted access observation without authoritative provider state.");
-        const expected = new Map(project.features.map((feature) => [feature.id, expectedAccess(project, authoritativeState!, virtualAt, feature.id)]));
+        const provider = await adapter.getProviderState(fixtureId);
+        if (!isDeepStrictEqual(provider.state, authoritativeState)) throw new AdapterError("Authoritative provider state does not match the scenario snapshot.", provider.evidence);
+        evidence.push(provider.evidence);
+        const expected = new Map(project.features.map((feature) => [feature.id, expectedAccess(project, provider.state, virtualAt, feature.id)]));
         const latest = new Map<string, Awaited<ReturnType<LocalHttpAdapter["probe"]>>>();
         const convergenceEndsAt = Date.now() + project.policy.convergenceDeadlineMs;
         let pending = project.features;

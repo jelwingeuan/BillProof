@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
+import { createServer } from "node:http";
 import { promisify } from "node:util";
 import test from "node:test";
 import { readJson, apiError } from "../lib/api";
@@ -91,6 +92,49 @@ test("readiness rejects a target connected to a different provider", async () =>
     if (previousProvider === undefined) delete process.env.BILLPROOF_PROVIDER_URL;
     else process.env.BILLPROOF_PROVIDER_URL = previousProvider;
     await target.stop();
+  }
+});
+
+test("readiness and doctor accept a custom target identity but reject an empty one", async () => {
+  const sample = await startSampleTarget({ targetPort: 0, providerPort: 0 });
+  let service: unknown = "merchant-staging";
+  const custom = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: true, service, contractVersion: 2, provider: sample.providerUrl }));
+  });
+  const previousTarget = process.env.BILLPROOF_TARGET_URL;
+  const previousProvider = process.env.BILLPROOF_PROVIDER_URL;
+  try {
+    await new Promise<void>((resolve, reject) => { custom.once("error", reject); custom.listen(0, "127.0.0.1", resolve); });
+    const address = custom.address();
+    assert.ok(address && typeof address !== "string");
+    const targetUrl = `http://127.0.0.1:${address.port}`;
+    process.env.BILLPROOF_TARGET_URL = targetUrl;
+    process.env.BILLPROOF_PROVIDER_URL = sample.providerUrl;
+    const ready = await health();
+    assert.equal(ready.status, 200);
+    assert.equal((await ready.json()).ready, true);
+
+    const dataPath = join(await mkdtemp(join(tmpdir(), "billproof-doctor-")), "state.json");
+    const doctor = () => promisify(execFile)(process.execPath, ["--import", "tsx", "scripts/doctor.ts"], {
+      cwd: process.cwd(),
+      env: { ...process.env, BILLPROOF_DATA_PATH: dataPath },
+    });
+    assert.match((await doctor()).stdout, /PASS  target implements contract v2/);
+
+    service = "  ";
+    assert.equal((await health()).status, 503);
+    await assert.rejects(doctor, (error: unknown) => {
+      assert.match((error as { stdout: string }).stdout, /FAIL  target implements contract v2/);
+      return true;
+    });
+  } finally {
+    if (previousTarget === undefined) delete process.env.BILLPROOF_TARGET_URL;
+    else process.env.BILLPROOF_TARGET_URL = previousTarget;
+    if (previousProvider === undefined) delete process.env.BILLPROOF_PROVIDER_URL;
+    else process.env.BILLPROOF_PROVIDER_URL = previousProvider;
+    await new Promise<void>((resolve) => custom.close(() => resolve()));
+    await sample.stop();
   }
 });
 

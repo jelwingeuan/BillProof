@@ -65,6 +65,48 @@ test("unreachable target returns an error report", async () => {
   assert.match(run.error ?? "", /Could not reach local target/);
 });
 
+test("provider readback rejects stale or malformed state with retained HTTP evidence", async () => {
+  const original = findScenario("successful-checkout")!;
+  const providerStep = original.steps.find((step) => step.kind === "provider_state")!;
+  const scenario = { ...original, steps: [providerStep, { kind: "observe" as const, checkpoint: "provider readback" }], assertions: [] };
+  const project = { ...demoProject(), features: [demoProject().features[0]], plans: demoProject().plans.map((plan) => ({ ...plan, featureIds: ["dashboard"] })) };
+  let providerState: unknown;
+  let protectedProbes = 0;
+  const server = createServer((request, response) => {
+    let body: unknown = { ok: true };
+    if (request.method === "GET" && request.url?.startsWith("/provider/state?")) body = { state: providerState };
+    if (request.method === "GET" && request.url?.startsWith("/protected/")) {
+      protectedProbes++;
+      body = { ok: true, featureId: "dashboard" };
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}`;
+  try {
+    for (const { state, message } of [
+      { state: { ...providerStep.snapshot, revision: 99 }, message: /does not match/ },
+      { state: { ...providerStep.snapshot, revision: "invalid" }, message: /malformed subscription snapshot/ },
+    ]) {
+      providerState = state;
+      protectedProbes = 0;
+      const run = await runScenario({ project, scenario, mode: "corrected", targetUrl: url, providerUrl: url });
+      assert.equal(run.status, "error");
+      assert.match(run.error ?? "", message);
+      assert.equal(protectedProbes, 0);
+      const readback = run.evidence.find((item) => item.label === "Query authoritative provider state");
+      assert.equal(readback?.responseStatus, 200);
+      assert.equal(readback?.responseBody, JSON.stringify({ state }));
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("convergence accepts delayed access, rejects persistent mismatch and late success, and retains cleanup warnings", async () => {
   const original = findScenario("successful-checkout")!;
   const providerStep = original.steps.find((step) => step.kind === "provider_state")!;
@@ -75,6 +117,11 @@ test("convergence accepts delayed access, rejects persistent mismatch and late s
   const server = createServer((request, response) => {
     const send = (status: number, ok: boolean, featureId?: string) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify({ ok, ...(featureId ? { featureId } : {}) })); };
     if (request.method === "DELETE") return send(500, false);
+    if (request.method === "GET" && request.url?.startsWith("/provider/state?")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ state: providerStep.snapshot }));
+      return;
+    }
     if (request.url?.startsWith("/protected/")) {
       probes++;
       if (behavior === "late" && probes > 1) { setTimeout(() => send(200, true, "dashboard"), 300); return; }

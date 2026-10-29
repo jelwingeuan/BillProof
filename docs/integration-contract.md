@@ -8,7 +8,7 @@ Set `BILLPROOF_TARGET_URL` and `BILLPROOF_PROVIDER_URL` to HTTP loopback origins
 
 | Method | Path | Purpose | Successful response |
 | --- | --- | --- | --- |
-| `GET` | `/health` | Identify the target and contract | `200 { "ok": true, "service": "billproof-sample-target", "contractVersion": 2, "provider": "..." }` |
+| `GET` | `/health` | Identify the target and contract | `200 { "ok": true, "service": "my-local-target", "contractVersion": 2, "provider": "http://127.0.0.1:4101" }` |
 | `POST` | `/test/reset` | Create an isolated fixture | `200` |
 | `DELETE` | `/test/fixture?scenarioId=...` | Release a fixture | `2xx` |
 | `POST` | `/test/clock` | Set the fixture's virtual UTC time | `200` |
@@ -17,6 +17,8 @@ Set `BILLPROOF_TARGET_URL` and `BILLPROOF_PROVIDER_URL` to HTTP loopback origins
 | `GET` | `/test/effects?scenarioId=...` | Read the demo credit effect | `200 { "creditGrantCount": 0 }` |
 
 Fixture-mutating requests include a `scenarioId`. Reset also receives `customerId`, `mode`, and the validated project. Clock requests receive an ISO UTC `at`. Webhook requests receive `{ scenarioId, event, retry }`.
+
+Choose a nonempty `service` name for your target; the bundled sample uses `billproof-sample-target`. The health response must report the exact configured provider URL and contract version 2. BillProof checks these before enabling dashboard runs.
 
 Every protected-operation response must identify the feature actually served in `featureId`, including denied responses. BillProof rejects a response when `featureId` is absent or differs from the feature being probed. A custom `protectedPath` is supported, but its response still must identify the requested feature. Update custom targets that only return `ok` before using contract v2. Previously saved v1 run reports remain readable.
 
@@ -28,5 +30,7 @@ Every protected-operation response must identify the feature actually served in 
 | `POST` | `/provider/state` | Set its authoritative subscription snapshot |
 | `GET` | `/provider/state?scenarioId=...` | Read that snapshot; unknown fixtures return `404` |
 | `DELETE` | `/provider/state?scenarioId=...` | Release the fixture |
+
+Before each access observation, BillProof reads the provider state and requires it to match the latest snapshot written for that fixture. A missing, malformed, or stale readback makes the run an execution error with the provider response retained as evidence.
 
 The exact payload schemas live in [`lib/types.ts`](../lib/types.ts). Run `npm run target` and then `npm run doctor` before using a custom scenario. A future breaking endpoint or payload change must increment `contractVersion`.

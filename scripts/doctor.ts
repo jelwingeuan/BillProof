@@ -39,7 +39,7 @@ const providerUrl = localUrl(process.env.BILLPROOF_PROVIDER_URL ?? "http://127.0
 await check(`target implements contract v${BILLPROOF_CONTRACT_VERSION}`, async () => {
   const response = await fetch(`${targetUrl}/health`, { redirect: "error", signal: AbortSignal.timeout(1_200) });
   const body = await response.json() as { ok?: unknown; service?: unknown; contractVersion?: unknown; provider?: unknown };
-  if (!response.ok || body.ok !== true || body.service !== "billproof-sample-target" || body.contractVersion !== BILLPROOF_CONTRACT_VERSION) {
+  if (!response.ok || body.ok !== true || typeof body.service !== "string" || !body.service.trim() || body.contractVersion !== BILLPROOF_CONTRACT_VERSION) {
     throw new Error("unexpected health response");
   }
   if (body.provider !== providerUrl) throw new Error(`target uses ${String(body.provider)} instead of ${providerUrl}`);
