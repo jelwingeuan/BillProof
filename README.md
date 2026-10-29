@@ -4,7 +4,7 @@
 
 BillProof checks whether a subscription application's **actual protected operations** match explicit access rules. This MVP is a local, deterministic demonstration. It uses simulated billing events and sample data; it does not connect to Stripe, Supabase, or a customer system.
 
-The interface uses [Ranade](https://www.fontshare.com/fonts/ranade) from Fontshare when online, with bundled Geist Sans as its offline fallback. Fontshare serves the Ranade file directly; it is not redistributed in this repository under the ITF Free Font License. Evidence and IDs use bundled Geist Mono.
+The interface uses [Switzer](https://www.fontshare.com/fonts/switzer) from Fontshare when online, with bundled Geist Sans as its offline fallback. Fontshare serves the Switzer file directly; it is not redistributed in this repository under the ITF Free Font License. Evidence and IDs use bundled Geist Mono.
 
 ## Quick start
 
@@ -56,6 +56,8 @@ The CLI exits `0` for a passing run, `1` for findings, and `2` for execution err
 5. Run **Duplicate payment delivery** in corrected mode. Its effect count is exactly one, even though the identical event ID is delivered twice.
 
 Completed runs, plans, rules, and scenario definitions persist in `data/billproof.json`. Writes validate the full document, acquire a cross-process filesystem lock, flush a private temporary file, and atomically replace the document. Concurrent edits preserve unrelated records; stale policy edits are rejected. A corrupt file is never silently reset. The latest 100 reports are retained; download important reports before they age out.
+
+Scenario imports reject IDs already in the catalogue by default. Select **Replace matching IDs** in the import form when you intentionally want to update saved definitions; existing reports keep their captured inputs.
 
 ## Replay and backup
 

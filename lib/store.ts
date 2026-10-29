@@ -89,10 +89,13 @@ export async function saveScenario(scenario: Scenario): Promise<Scenario> {
   return (await saveScenarios([scenario]))[0];
 }
 
-export async function saveScenarios(scenarios: Scenario[]): Promise<Scenario[]> {
+export async function saveScenarios(scenarios: Scenario[], replaceExisting = false): Promise<Scenario[]> {
   const checked = scenarios.map((scenario) => ImportedScenarioSchema.parse(scenario));
   if (!checked.length || checked.length > 50 || new Set(checked.map((item) => item.id)).size !== checked.length) throw new Error("Import 1–50 scenarios with unique IDs.");
   await mutateState((state) => {
+    const existingIds = new Set(state.scenarios.map((item) => item.id));
+    const collisions = checked.filter((scenario) => existingIds.has(scenario.id)).length;
+    if (collisions && !replaceExisting) throw new Error(`Scenario IDs already exist (${collisions}). Select Replace matching IDs to overwrite saved definitions.`);
     for (const scenario of checked) {
       const index = state.scenarios.findIndex((item) => item.id === scenario.id);
       if (index < 0) state.scenarios.push(scenario);

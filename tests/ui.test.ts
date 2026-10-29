@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AppClient } from "../app/ui";
+import { AppClient, SuiteProgress } from "../app/ui";
 import { demoProject } from "../lib/policy";
 import { DEMO_SCENARIOS } from "../lib/scenarios";
 import type { ScenarioRun } from "../lib/types";
@@ -26,4 +26,19 @@ test("workspace explains first use and distinguishes incomplete reports from pas
   assert.doesNotMatch(error, /All recorded checks matched the rules/);
   const skipped = renderToStaticMarkup(createElement(AppClient, { initialState: { ...state, runs: [{ ...report, status: "skipped", error: undefined }] } }));
   assert.match(skipped, /This check was skipped/);
+
+  const withInputs = renderToStaticMarkup(createElement(AppClient, { initialState: { ...state, runs: [{ ...report, inputs: { project: state.projects[0], scenario } }] } }));
+  assert.match(withInputs, new RegExp(`customer fixture <code>${scenario.customerId}</code>`));
+  assert.match(error, /customer fixture <code>unavailable in legacy report<\/code>/);
+});
+
+test("React Bits suite verdict reflects findings instead of showing a success mark", () => {
+  const base = { status: "complete" as const, completed: 2, total: 2, counts: { pass: 2, fail: 0, error: 0, skipped: 0 } };
+  const allPass = renderToStaticMarkup(createElement(SuiteProgress, { suite: base, onViewLatest: () => {} }));
+  assert.match(allPass, /data-status="done"/);
+  assert.match(allPass, /All checks passed in/);
+
+  const withFindings = renderToStaticMarkup(createElement(SuiteProgress, { suite: { ...base, counts: { ...base.counts, pass: 1, fail: 1 } }, onViewLatest: () => {} }));
+  assert.match(withFindings, /data-status="error"/);
+  assert.match(withFindings, /Suite finished with issues after/);
 });

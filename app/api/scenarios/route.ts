@@ -8,7 +8,8 @@ export async function POST(request: Request) {
     const payload = await readJson(request);
     const candidates = Array.isArray(payload) ? payload : [payload];
     const scenarios = candidates.map((candidate) => ScenarioSchema.parse(candidate));
-    await saveScenarios(scenarios);
+    const replaceExisting = new URL(request.url).searchParams.get("replace") === "1";
+    await saveScenarios(scenarios, replaceExisting);
     return NextResponse.json({ ok: true, scenarios });
   } catch (error) {
     return apiError(error);

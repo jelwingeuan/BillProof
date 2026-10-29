@@ -47,18 +47,21 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   const [state, setState] = useState(initialState);
   const [tab, setTab] = useState<Tab>("overview");
   const [selectedScenarioId, setSelectedScenarioId] = useState("stale-pre-cancellation");
-  const [mode, setMode] = useState<TargetMode>("naive");
+  const [mode, setMode] = useState<TargetMode>("corrected");
   const [runningScenarioId, setRunningScenarioId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(state.runs[0]?.id ?? null);
   const [notice, setNotice] = useState("");
   const [comparison, setComparison] = useState<ComparisonState | null>(null);
   const [importText, setImportText] = useState("");
+  const [replaceExistingScenarios, setReplaceExistingScenarios] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [scenarioQuery, setScenarioQuery] = useState("");
   const [health, setHealth] = useState<HealthState>({ state: "checking" });
   const [suite, setSuite] = useState<SuiteState>({ status: "idle", completed: 0, total: state.scenarios.length, counts: emptyCounts() });
   const suiteStopRequested = useRef(false);
   const actionBusy = useRef(false);
   const saveBusy = useRef(false);
+  const importBusy = useRef(false);
   const focusReport = useRef(false);
   const focusComparison = useRef(false);
   const focusTabHeading = useRef(false);
@@ -233,19 +236,23 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   }
 
   async function importScenarios(): Promise<void> {
+    if (importBusy.current) return;
+    importBusy.current = true;
+    setImporting(true);
     setNotice("");
     try {
       const parsed = JSON.parse(importText);
-      const response = await fetch("/api/scenarios", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(parsed) });
+      const response = await fetch(replaceExistingScenarios ? "/api/scenarios?replace=1" : "/api/scenarios", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(parsed) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Scenario import was rejected.");
       const imported = payload.scenarios as Scenario[];
       setState((current) => ({ ...current, scenarios: [...current.scenarios.filter((old) => !imported.some((item) => item.id === old.id)), ...imported] }));
-      setNotice(`${imported.length} JSON scenario${imported.length === 1 ? "" : "s"} validated and saved locally.`);
+      setNotice(`${imported.length} JSON scenario${imported.length === 1 ? "" : "s"} validated and saved locally.${replaceExistingScenarios ? " Matching IDs were replaced where present." : ""}`);
       setImportText("");
+      setReplaceExistingScenarios(false);
     } catch (error) {
       setNotice(`Scenario import error: ${error instanceof Error ? error.message : "Invalid JSON"}`);
-    }
+    } finally { importBusy.current = false; setImporting(false); }
   }
 
   function updatePolicy<K extends keyof Project["policy"]>(key: K, value: Project["policy"][K]): void {
@@ -290,12 +297,12 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
         {tab === "setup" && <fieldset className="settings-fieldset" disabled={saving || Boolean(runningScenarioId)} aria-busy={saving}><legend className="sr-only">Project settings</legend><p role="status">{saving ? "Saving changes…" : runningScenarioId ? "Settings are locked while a run is active." : "Changes save automatically."}</p><Setup project={project} onPolicy={updatePolicy} onToggle={toggleFeature} /></fieldset>}
         {tab === "scenarios" && <Scenarios
           scenarios={state.scenarios} selected={selectedScenario} mode={mode} running={runningScenarioId} suite={suite}
-          query={scenarioQuery} importText={importText} health={health}
+          query={scenarioQuery} importText={importText} replaceExisting={replaceExistingScenarios} importing={importing} health={health}
           onMode={setMode} onSelect={setSelectedScenarioId} onQuery={setScenarioQuery}
           onRun={(id) => void runOne(id)} onCompare={(id) => void compareModes(id)}
           onSuite={() => void runSuite()} onStopSuite={stopSuite}
           onViewLatest={() => { focusReport.current = true; setTab("overview"); }}
-          onImportText={setImportText} onImport={() => void importScenarios()}
+          onImportText={setImportText} onReplaceExisting={setReplaceExistingScenarios} onImport={() => void importScenarios()}
         />}
         {tab === "integration" && <Integration health={health} onRefresh={() => void checkHealth()} />}
       </section>
@@ -362,24 +369,32 @@ function Select({ label, value, options, onChange }: { label: string; value: str
   return <label><span className="label">{label}</span><select className="control" value={value} onChange={(event) => onChange(event.target.value)}>{options.map(([option, title]) => <option value={option} key={option}>{title}</option>)}</select></label>;
 }
 
-function Scenarios({ scenarios, selected, mode, running, suite, query, importText, health, onMode, onSelect, onQuery, onRun, onCompare, onSuite, onStopSuite, onViewLatest, onImportText, onImport }: {
-  scenarios: Scenario[]; selected?: Scenario; mode: TargetMode; running: string | null; suite: SuiteState; query: string; importText: string; health: HealthState;
+function Scenarios({ scenarios, selected, mode, running, suite, query, importText, replaceExisting, importing, health, onMode, onSelect, onQuery, onRun, onCompare, onSuite, onStopSuite, onViewLatest, onImportText, onReplaceExisting, onImport }: {
+  scenarios: Scenario[]; selected?: Scenario; mode: TargetMode; running: string | null; suite: SuiteState; query: string; importText: string; replaceExisting: boolean; importing: boolean; health: HealthState;
   onMode: (mode: TargetMode) => void; onSelect: (id: string) => void; onQuery: (value: string) => void; onRun: (id: string) => void; onCompare: (id: string) => void;
-  onSuite: () => void; onStopSuite: () => void; onViewLatest: () => void; onImportText: (value: string) => void; onImport: () => void;
+  onSuite: () => void; onStopSuite: () => void; onViewLatest: () => void; onImportText: (value: string) => void; onReplaceExisting: (value: boolean) => void; onImport: () => void;
 }) {
   const normalized = query.trim().toLowerCase();
   const filtered = scenarios.filter((item) => !normalized || `${item.title} ${item.description} ${item.tags.join(" ")}`.toLowerCase().includes(normalized));
   const visibleSelection = filtered.find((item) => item.id === selected?.id) ?? filtered[0];
   const suiteBusy = suite.status === "running" || suite.status === "stopping";
-  const percent = suite.total ? Math.round((suite.completed / suite.total) * 100) : 0;
   return <div className="content-stack"><PageHeading eyebrow="Scenario catalogue" title="Choose a lifecycle to check" description="Select a scenario, choose the target behavior, and run a check. Compare both behaviors to understand an intentional demo failure." />
     <section className="card run-toolbar"><div><label className="label" htmlFor="target-mode">Target behavior</label><select id="target-mode" className="control" disabled={Boolean(running)} value={mode} onChange={(event) => onMode(event.target.value as TargetMode)}><option value="naive">Naive — intentionally flawed</option><option value="corrected">Corrected — reconciled reference</option></select></div><div className="toolbar-status"><span className={`service-dot service-${health.state}`} aria-hidden>●</span><strong>{health.state === "ready" ? "Target ready" : health.state === "offline" ? "Target offline" : "Checking target"}</strong><small>{health.state === "ready" ? "Each check saves a report with observed access." : "Start npm run target, then refresh the badge above."}</small></div><div className="toolbar-actions">{suiteBusy ? <button className="btn btn-danger" onClick={onStopSuite} disabled={suite.status === "stopping"}>{suite.status === "stopping" ? "Stopping after current…" : "Stop after current"}</button> : <button className="btn btn-secondary" onClick={onSuite} disabled={Boolean(running) || health.state !== "ready"}>Run full suite</button>}</div></section>
-    {suite.status !== "idle" && <section className="suite-progress" aria-live="polite"><div><LatticeLoader status={suite.status === "complete" ? "done" : suite.status === "cancelled" || suite.status === "error" ? "error" : "working"} label={suite.status === "stopping" ? "Stopping suite" : "Running suite"} doneLabel="Suite completed in" errorLabel={suite.status === "cancelled" ? "Suite stopped after" : "Suite interrupted after"} color="#1f66e5" doneColor="#067a57" errorColor="#b42318" fontSize={13} /><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" role="progressbar" aria-label="Suite progress" aria-valuenow={suite.completed} aria-valuemin={0} aria-valuemax={suite.total}><span style={{ width: `${percent}%` }} /></div><div className="suite-outcomes"><span>{suite.counts.pass} passed</span><span>{suite.counts.fail} with findings</span><span>{suite.counts.error} errors</span><span>{suite.counts.skipped} skipped</span>{!suiteBusy && suite.completed > 0 && <button className="btn btn-secondary" onClick={onViewLatest}>View latest report</button>}</div></section>}
+    {suite.status !== "idle" && <SuiteProgress suite={suite} onViewLatest={onViewLatest} />}
     <div className="scenario-layout"><section><div className="scenario-filter"><label><span className="sr-only">Search scenarios</span><input className="control" type="search" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search checkout, cancellation, duplicate…" /></label><span>{filtered.length} of {scenarios.length}</span></div><div className="scenario-list">{filtered.map((item) => <button key={item.id} onClick={() => onSelect(item.id)} aria-pressed={visibleSelection?.id === item.id} className={`scenario-card ${visibleSelection?.id === item.id ? "is-selected" : ""}`}><span className="scenario-index">{String(scenarios.indexOf(item) + 1).padStart(2, "0")}</span><span className="scenario-copy"><strong>{item.title}</strong><small>{item.description}</small><span className="tag-row">{item.tags.map((tag) => <em key={tag}>{tag}</em>)}</span></span>{item.tags.includes("demo-failure") && <span className="pill pill-fail">demo fault</span>}</button>)}{filtered.length === 0 && <Empty text="No scenarios match this search." />}</div></section>
       <aside className="scenario-aside">{visibleSelection && <section className="card selection-card"><label className="scenario-quick-select"><span className="label">Scenario to run</span><select className="control" value={visibleSelection.id} onChange={(event) => onSelect(event.target.value)}>{filtered.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><p className="eyebrow">Selected scenario</p><h2>{visibleSelection.title}</h2><p>{visibleSelection.description}</p><dl><div><dt>Stable ID</dt><dd><code>{visibleSelection.id}</code></dd></div><div><dt>Seed</dt><dd><code>{visibleSelection.seed}</code></dd></div><div><dt>Steps</dt><dd>{visibleSelection.steps.length}</dd></div></dl>{running === visibleSelection.id && !suiteBusy && <div className="check-progress"><LatticeLoader label="Checking access" color="#1f66e5" fontSize={13} /></div>}<button className="btn btn-primary w-full" disabled={Boolean(running) || health.state !== "ready"} onClick={() => onRun(visibleSelection.id)}>{running === visibleSelection.id ? "Running check…" : `Run in ${mode} mode`}</button><button className="btn btn-secondary mt-2 w-full" disabled={Boolean(running) || health.state !== "ready"} onClick={() => onCompare(visibleSelection.id)}>Compare naive vs corrected</button></section>}
-      <details className="card import-card"><summary>Import scenario JSON</summary><p>Paste one scenario or an array. Schema validation runs before local storage.</p><textarea aria-label="Scenario JSON import" className="control mono" value={importText} onChange={(event) => onImportText(event.target.value)} placeholder='{"id":"my-scenario", ...}' /><button className="btn btn-secondary w-full" disabled={!importText.trim() || Boolean(running)} onClick={onImport}>Validate and import</button></details></aside>
+      <details className="card import-card"><summary>Import scenario JSON</summary><p>Paste one scenario or an array. Schema validation runs before local storage. Existing IDs are kept unless you choose to replace them.</p><textarea aria-label="Scenario JSON import" className="control mono" value={importText} onChange={(event) => onImportText(event.target.value)} placeholder='{"id":"my-scenario", ...}' disabled={importing || Boolean(running)} /><label className="import-replace-option"><input type="checkbox" checked={replaceExisting} onChange={(event) => onReplaceExisting(event.target.checked)} disabled={importing || Boolean(running)} /><span><strong>Replace matching IDs</strong><small>Overwrites saved scenario definitions. Existing reports stay unchanged.</small></span></label><button className="btn btn-secondary w-full" disabled={!importText.trim() || Boolean(running) || importing} onClick={onImport}>{importing ? "Importing…" : replaceExisting ? "Validate and replace" : "Validate and import"}</button></details></aside>
     </div>
   </div>;
+}
+
+export function SuiteProgress({ suite, onViewLatest }: { suite: SuiteState; onViewLatest: () => void }) {
+  const busy = suite.status === "running" || suite.status === "stopping";
+  const allPassed = suite.status === "complete" && suite.total > 0 && suite.completed === suite.total && suite.counts.pass === suite.total;
+  const status = allPassed ? "done" : busy ? "working" : "error";
+  const errorLabel = suite.status === "cancelled" ? "Suite stopped after" : suite.status === "error" ? "Suite interrupted after" : "Suite finished with issues after";
+  const percent = suite.total ? Math.round((suite.completed / suite.total) * 100) : 0;
+  return <section className="suite-progress" aria-live="polite"><div><LatticeLoader status={status} label={suite.status === "stopping" ? "Stopping suite" : "Running suite"} doneLabel="All checks passed in" errorLabel={errorLabel} color="#1f66e5" doneColor="#067a57" errorColor="#b42318" fontSize={13} /><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" role="progressbar" aria-label="Suite progress" aria-valuenow={suite.completed} aria-valuemin={0} aria-valuemax={suite.total}><span style={{ width: `${percent}%` }} /></div><div className="suite-outcomes"><span>{suite.counts.pass} passed</span><span>{suite.counts.fail} with findings</span><span>{suite.counts.error} errors</span><span>{suite.counts.skipped} skipped</span>{!busy && suite.completed > 0 && <button className="btn btn-secondary" onClick={onViewLatest}>View latest report</button>}</div></section>;
 }
 
 function Integration({ health, onRefresh }: { health: HealthState; onRefresh: () => void }) {
@@ -410,7 +425,7 @@ function RunDetail({ run }: { run: ScenarioRun }) {
   const mismatches = run.observations.filter((item) => item.observedAllowed !== item.expectedAllowed).length;
   const observations = onlyMismatches ? run.observations.filter((item) => item.observedAllowed !== item.expectedAllowed) : run.observations;
   const verdict = run.status === "pass" ? "All recorded checks matched the rules." : run.status === "fail" ? `${run.findings.length} finding${run.findings.length === 1 ? " needs" : "s need"} your attention.` : run.status === "error" ? "This check could not finish." : "This check was skipped.";
-  return <section id="run-report" tabIndex={-1} className="card report-card" aria-label="Run report"><header className="report-header"><div><p className="eyebrow">Selected report</p><div className="report-title"><h2>{run.scenarioTitle}</h2><Status status={run.status} /></div><p>{run.targetMode} behavior · completed {date(run.completedAt)} UTC</p></div><div className="report-actions"><a className="btn btn-secondary" href={`/api/export?run=${encodeURIComponent(run.id)}`} download>Download report</a><button className="btn btn-secondary" onClick={() => void copyCommand()}>Copy replay command</button><span role="status">{copyStatus}</span></div></header>
+  return <section id="run-report" tabIndex={-1} className="card report-card" aria-label="Run report"><header className="report-header"><div><p className="eyebrow">Selected report</p><div className="report-title"><h2>{run.scenarioTitle}</h2><Status status={run.status} /></div><p>{run.targetMode} behavior · customer fixture <code>{run.inputs?.scenario.customerId ?? run.findings[0]?.customerId ?? "unavailable in legacy report"}</code> · completed {date(run.completedAt)} UTC</p></div><div className="report-actions"><a className="btn btn-secondary" href={`/api/export?run=${encodeURIComponent(run.id)}`} download>Download report</a><button className="btn btn-secondary" onClick={() => void copyCommand()}>Copy replay command</button><span role="status">{copyStatus}</span></div></header>
     <div className={`report-verdict verdict-${run.status}`}><strong>{verdict}</strong><p>{run.status === "pass" ? "This result covers this scenario and policy. Explore other lifecycle checks for broader coverage." : run.status === "fail" ? run.targetMode === "naive" ? "This target is intentionally flawed. Compare with the corrected reference to see the difference." : "Review the findings and expected access below, then replay the report to investigate." : run.status === "error" ? "An incomplete run is not a pass. Check the error and your local connection before retrying." : "No verification result is available for this run."}</p></div>
     <div className="report-metrics"><Metric label="Observations" value={String(run.observations.length)} note="Protected operations" /><Metric label="Mismatches" value={String(mismatches)} note="Expected vs observed" tone={mismatches ? "red" : "green"} /><Metric label="Deliveries" value={String(run.deliveryAttempts.length)} note="In recorded order" /><Metric label="HTTP records" value={String(run.evidence.length)} note="Captured responses" /></div>
     {run.error && <div className="error-banner"><strong>Execution error</strong><span>{run.error}</span></div>}

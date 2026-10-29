@@ -13,6 +13,34 @@ import { DEMO_SCENARIOS } from "../lib/scenarios";
 import { readState, saveProject, saveScenarios } from "../lib/store";
 import { startSampleTarget } from "../scripts/sample-target";
 import { GET as health } from "../app/api/health/route";
+import { POST as importScenarios } from "../app/api/scenarios/route";
+
+test("scenario imports keep existing definitions until replacement is explicitly requested", async () => {
+  const path = join(await mkdtemp(join(tmpdir(), "billproof-import-")), "state.json");
+  const previousPath = process.env.BILLPROOF_DATA_PATH;
+  process.env.BILLPROOF_DATA_PATH = path;
+  try {
+    const original = DEMO_SCENARIOS[0];
+    const replacement = { ...original, title: "Updated checkout check" };
+    const fresh = { ...original, id: "fresh-import" };
+    const request = (url: string) => new Request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify([replacement, fresh]) });
+
+    const rejected = await importScenarios(request("http://localhost:3000/api/scenarios"));
+    assert.equal(rejected.status, 409);
+    assert.match((await rejected.json()).error, /Scenario IDs already exist/);
+    assert.equal((await readState()).scenarios.find((item) => item.id === original.id)?.title, original.title);
+    assert.equal((await readState()).scenarios.some((item) => item.id === fresh.id), false, "a rejected batch must not save its new scenarios");
+
+    const accepted = await importScenarios(request("http://localhost:3000/api/scenarios?replace=1"));
+    assert.equal(accepted.status, 200);
+    const saved = await readState();
+    assert.equal(saved.scenarios.find((item) => item.id === original.id)?.title, replacement.title);
+    assert.equal(saved.scenarios.some((item) => item.id === fresh.id), true);
+  } finally {
+    if (previousPath === undefined) delete process.env.BILLPROOF_DATA_PATH;
+    else process.env.BILLPROOF_DATA_PATH = previousPath;
+  }
+});
 
 test("scenario customers must match billing snapshots before import or execution", async () => {
   const path = join(await mkdtemp(join(tmpdir(), "billproof-customer-")), "state.json");

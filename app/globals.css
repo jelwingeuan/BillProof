@@ -1,10 +1,10 @@
 @import "tailwindcss";
 
 @font-face {
-  font-family: Ranade;
-  src: url("https://cdn.fontshare.com/wf/4I3GQ5RKI7INEN77JLE5K6MUGH3Q6XBQ/OE2GKODT24OQXFQ3ANDXIPBDXBQU4CTJ/4ISE7PRDMUTRGIOEEJAQ6FWTTIGY35CA.woff2") format("woff2");
+  font-family: Switzer;
+  src: url("https://cdn.fontshare.com/wf/HJHZ26OECMTXRH7JXPFC7EVIHDSLT2RA/LJRNLR7WCPF3PY3SZ7B2LHNUTQMFNCHL/4MCJYGQDIOOXHWSIIB2OYNDBEALJSOGN.woff2") format("woff2");
   font-style: normal;
-  font-weight: 100 700;
+  font-weight: 100 900;
   font-display: swap;
 }
 
@@ -33,7 +33,7 @@ body {
   min-width: 320px;
   background: radial-gradient(circle at 85% 0%, #e9efff 0, transparent 28rem), var(--paper);
   color: var(--ink);
-  font-family: Ranade, var(--font-geist-sans), ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Switzer, var(--font-geist-sans), ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
 }
 button, select, textarea, input { font: inherit; }
@@ -206,6 +206,10 @@ code, .mono { font-family: var(--font-geist-mono), "SFMono-Regular", Consolas, "
 .check-progress { margin: 2px 0 14px; border-radius: 9px; background: var(--blue-soft); padding: 11px 12px; color: var(--ink); }
 .check-progress .lattice-loader__timer { color: var(--muted); }
 .scenario-copy > small, .selection-card > p:not(.eyebrow), .toolbar-status small, .import-card p, .connection-card p, .contract-step > p, .supporting-copy, .timeline-item strong, .timeline-item small { font-size: 12px; }
+.import-replace-option { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; cursor: pointer; }
+.import-replace-option input { margin: 3px 0 0; }
+.import-replace-option strong, .import-replace-option small { display: block; font-size: 12px; line-height: 1.4; }
+.import-replace-option small { margin-top: 2px; color: var(--muted); }
 .selection-card > p:not(.eyebrow), .contract-step > p, .supporting-copy { line-height: 1.6; }
 .feature-check small, .table-wrap .data-table td small { font-size: 11px; }
 .evidence-list article > div, .evidence-list pre { font-size: 11px; line-height: 1.55; }

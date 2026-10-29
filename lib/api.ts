@@ -26,7 +26,7 @@ export function apiError(error: unknown): Response {
   if (error instanceof RequestError) return Response.json({ error: error.message }, { status: error.status });
   if (error instanceof ZodError) return Response.json({ error: error.issues.map((issue) => `${issue.path.join(".") || "Input"}: ${issue.message}`).join("; ") }, { status: 400 });
   if (error instanceof SyntaxError) return Response.json({ error: "Invalid JSON. Check the syntax and try again." }, { status: 400 });
-  if (error instanceof Error && /Policy changed|Storage is busy|Import 1|catalogue is limited/.test(error.message)) return Response.json({ error: error.message }, { status: 409 });
+  if (error instanceof Error && /Policy changed|Storage is busy|Import 1|catalogue is limited|Scenario IDs already exist/.test(error.message)) return Response.json({ error: error.message }, { status: 409 });
   console.error("BillProof request failed", error);
   return Response.json({ error: "The operation could not be completed. Check the BillProof terminal and retry." }, { status: 500 });
 }
