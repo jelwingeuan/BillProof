@@ -10,7 +10,7 @@ import type { ScenarioRun } from "../lib/types";
 test("workspace explains first use and distinguishes incomplete reports from passes", () => {
   const state = { version: 1 as const, projects: [demoProject()], scenarios: DEMO_SCENARIOS, runs: [] as ScenarioRun[] };
   const empty = renderToStaticMarkup(createElement(AppClient, { initialState: state }));
-  assert.match(empty, /Start the sample target/);
+  assert.match(empty, /Checking sample target before checks can run/);
   assert.match(empty, /disabled="">Compare demo targets/);
   const scenario = DEMO_SCENARIOS[0];
   const report: ScenarioRun = {

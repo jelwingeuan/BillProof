@@ -4,7 +4,7 @@ Notable changes to BillProof are recorded here.
 
 ## Unreleased — 0.2.0
 
-- Redesigned the local workbench with clearer navigation, readable evidence, and mobile-friendly reports.
+- Gave the local workbench a dark verification layout with direct run actions and evidence-focused reports.
 - Added a production smoke check for the built dashboard and sample target.
 - Verified provider readback before access checks and retained stale or malformed responses as error evidence.
 - Accepted custom local target service names while retaining contract and provider checks.

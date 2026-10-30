@@ -141,9 +141,8 @@
 
 .lattice-loader__timer {
   font-family: var(--font-ui);
-  font-size: calc(var(--ll-font) * 0.875);
+  font-size: var(--ll-font);
   font-variant-numeric: tabular-nums;
-  opacity: 0.6;
 }
 
 .lattice-loader__sr {
