@@ -10,13 +10,6 @@ const geistSans = localFont({
   weight: "100 900",
 });
 
-const geistMono = localFont({
-  src: "./fonts/geist-mono-latin.woff2",
-  variable: "--font-geist-mono",
-  display: "swap",
-  weight: "100 900",
-});
-
 export const metadata: Metadata = {
   title: "BillProof — local access checks",
   description: "Catch subscription access mismatches before release.",
@@ -24,5 +17,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}><body>{children}</body></html>;
+  return <html lang="en" className={geistSans.variable}><body>{children}</body></html>;
 }

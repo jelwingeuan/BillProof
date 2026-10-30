@@ -2,7 +2,7 @@ BillProof-authored files are licensed under the MIT License below. The embedded
 React Bits LatticeLoader in components/react-bits/LatticeLoader.tsx and
 components/react-bits/LatticeLoader.css is licensed separately under the
 MIT + Commons Clause terms in components/react-bits/LICENSE.md.
-The Geist Sans and Geist Mono files in app/fonts/ are licensed under the
+The Geist Sans fallback file in app/fonts/ is licensed under the
 SIL Open Font License 1.1 in app/fonts/OFL.txt.
 
 MIT License
