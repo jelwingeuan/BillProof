@@ -11,7 +11,8 @@ import { localRequestError, localUrl } from "../lib/local-boundary";
 import { demoProject } from "../lib/policy";
 import { runScenario } from "../lib/runner";
 import { DEMO_SCENARIOS } from "../lib/scenarios";
-import { readState, saveProject, saveScenarios } from "../lib/store";
+import { readState, saveProject, saveRun, saveScenarios } from "../lib/store";
+import type { ScenarioRun } from "../lib/types";
 import { startSampleTarget } from "../scripts/sample-target";
 import { GET as health } from "../app/api/health/route";
 import { POST as importScenarios } from "../app/api/scenarios/route";
@@ -175,6 +176,35 @@ test("concurrent storage edits preserve records, reject stale policy, and never 
   await writeFile(path, "invalid JSON");
   await assert.rejects(saveScenarios([DEMO_SCENARIOS[0]]));
   assert.equal(await readFile(path, "utf8"), "invalid JSON");
+});
+
+test("saving a 101st report preserves the oldest recorded evidence", async () => {
+  const path = join(await mkdtemp(join(tmpdir(), "billproof-retention-")), "state.json");
+  const previousPath = process.env.BILLPROOF_DATA_PATH;
+  process.env.BILLPROOF_DATA_PATH = path;
+  try {
+    const project = demoProject();
+    const scenario = DEMO_SCENARIOS[0];
+    const run: ScenarioRun = {
+      id: "run-100", projectId: project.id, scenarioId: scenario.id, scenarioTitle: scenario.title,
+      seed: scenario.seed, targetMode: "corrected", status: "pass",
+      startedAt: scenario.startAt, completedAt: scenario.startAt,
+      virtualStartAt: scenario.startAt, virtualEndAt: scenario.startAt,
+      deliveryAttempts: [], observations: [], findings: [], evidence: [], reproductionCommand: "npm run cli",
+    };
+    const existing = Array.from({ length: 100 }, (_, index) => ({ ...run, id: `run-${index}` }));
+    await writeFile(path, JSON.stringify({ version: 1, projects: [project], scenarios: [scenario], runs: existing }));
+
+    await saveRun(run);
+    const saved = await readState();
+    assert.equal(saved.runs.length, 101);
+    assert.equal(saved.runs[0].id, run.id);
+    assert.equal(saved.runs.at(-1)?.id, "run-99");
+    assert.equal(saved.runs.find((item) => item.id === "run-0")?.scenarioTitle, scenario.title);
+  } finally {
+    if (previousPath === undefined) delete process.env.BILLPROOF_DATA_PATH;
+    else process.env.BILLPROOF_DATA_PATH = previousPath;
+  }
 });
 
 test("concurrent runs stay isolated, all reference scenarios pass, assertions are enforced and fixtures are released", async () => {

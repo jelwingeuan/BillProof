@@ -68,7 +68,7 @@ async function mutateState(change: (state: PersistedState) => void): Promise<voi
 
 export async function saveRun(run: ScenarioRun): Promise<void> {
   const checked = ScenarioRunSchema.parse(run);
-  await mutateState((state) => { state.runs = [checked, ...state.runs.filter((item) => item.id !== checked.id)].slice(0, 100); });
+  await mutateState((state) => { state.runs = [checked, ...state.runs.filter((item) => item.id !== checked.id)]; });
 }
 
 export async function saveProject(project: Project): Promise<Project> {

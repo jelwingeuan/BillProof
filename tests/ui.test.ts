@@ -28,13 +28,35 @@ test("workspace explains first use and distinguishes incomplete reports from pas
   assert.match(error, /An incomplete run is not a pass/);
   assert.match(error, /Cleanup warning/);
   assert.match(error, /Find a report/);
+  assert.match(error, /<strong class="metric-amber">error<\/strong>/);
+  assert.doesNotMatch(error, /<strong class="metric-green">0<\/strong>/);
   assert.doesNotMatch(error, /All recorded checks matched the rules/);
   const skipped = renderToStaticMarkup(createElement(AppClient, { initialState: { ...state, runs: [{ ...report, status: "skipped", error: undefined }] } }));
   assert.match(skipped, /This check was skipped/);
+  assert.match(skipped, /Latest result<\/span><strong>skipped<\/strong>/);
+  assert.doesNotMatch(skipped, /<strong class="metric-green">0<\/strong>/);
 
   const withInputs = renderToStaticMarkup(createElement(AppClient, { initialState: { ...state, runs: [{ ...report, inputs: { project: state.projects[0], scenario } }] } }));
   assert.match(withInputs, new RegExp(`customer fixture <code>${scenario.customerId}</code>`));
   assert.match(error, /customer fixture <code>unavailable in legacy report<\/code>/);
+});
+
+test("report bookmarks restore the exact saved run and explain missing IDs", () => {
+  const project = demoProject();
+  const scenario = DEMO_SCENARIOS[0];
+  const base: ScenarioRun = {
+    id: "newer", projectId: project.id, scenarioId: scenario.id, scenarioTitle: "Newer report",
+    seed: scenario.seed, targetMode: "corrected", status: "pass",
+    startedAt: scenario.startAt, completedAt: scenario.startAt, virtualStartAt: scenario.startAt, virtualEndAt: scenario.startAt,
+    deliveryAttempts: [], observations: [], findings: [], evidence: [], reproductionCommand: "npm run cli",
+  };
+  const state = { version: 1 as const, projects: [project], scenarios: [scenario], runs: [base, { ...base, id: "older", scenarioTitle: "Older report" }] };
+  const bookmarked = renderToStaticMarkup(createElement(AppClient, { initialState: state, initialRunId: "older" }));
+  assert.match(bookmarked, /Selected report<\/p><div class="report-title"><h2>Older report<\/h2>/);
+  assert.match(bookmarked, /href="\/\?run=older#run-report"/);
+  const unavailable = renderToStaticMarkup(createElement(AppClient, { initialState: state, initialRunId: "removed" }));
+  assert.match(unavailable, /This report is not saved on this device/);
+  assert.doesNotMatch(unavailable, /Selected report<\/p>/);
 });
 
 test("React Bits suite verdict reflects findings instead of showing a success mark", () => {

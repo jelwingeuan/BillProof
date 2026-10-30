@@ -26,7 +26,7 @@ npm run dev
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000) and click **Compare demo targets**. The same scenario produces a failure in naive mode and a pass in corrected mode. Open **Scenarios** to run individual checks or the full suite.
 
-Workspace sections have shareable links such as `?tab=scenarios` and `?tab=policy`. Back and Forward return to previously viewed sections.
+Workspace sections have bookmarkable links such as `?tab=scenarios` and `?tab=policy`. Saved reports have links such as `?run=<report-id>#run-report`. Back and Forward restore the selected section and report. These links work only with reports stored on the same BillProof installation.
 
 All three processes bind to loopback. The dashboard runs on port 3000, the target on 4100, and the provider on 4101. Host/origin checks reject browser requests from other sites. Outbound target URLs must be HTTP loopback origins and redirects are rejected. This is a trusted, single-operator workstation tool; there is no user authentication, public hosting, or tenant isolation.
 
@@ -58,7 +58,7 @@ The CLI exits `0` for a passing run, `1` for findings, and `2` for execution err
 4. Select corrected mode. The target obtains the latest provider state over its own local HTTP interface, so the same stale delivery cannot restore access.
 5. Run **Duplicate payment delivery** in corrected mode. Its effect count is exactly one, even though the identical event ID is delivered twice.
 
-Completed runs, plans, rules, and scenario definitions persist in `data/billproof.json`. Writes validate the full document, acquire a cross-process filesystem lock, flush a private temporary file, and atomically replace the document. Concurrent edits preserve unrelated records; stale policy edits are rejected. A corrupt file is never silently reset. The latest 100 reports are retained; download important reports before they age out.
+Completed runs, plans, rules, and scenario definitions persist in `data/billproof.json`. Writes validate the full document, acquire a cross-process filesystem lock, flush a private temporary file, and atomically replace the document. Concurrent edits preserve unrelated records; stale policy edits are rejected. A corrupt file is never silently reset. Reports have no automatic count limit; back up the file regularly because it grows with use.
 
 Scenario imports reject IDs already in the catalogue by default. Select **Replace matching IDs** in the import form when you intentionally want to update saved definitions; existing reports keep their captured inputs.
 

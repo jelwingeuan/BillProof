@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { PersistedState, Project, Scenario, ScenarioRun, TargetMode } from "../lib/types";
 import LatticeLoader from "../components/react-bits/LatticeLoader";
 
@@ -27,6 +27,11 @@ const tabFromUrl = (url: URL): Tab => {
   const values = url.searchParams.getAll("tab");
   return values.length === 1 ? parseTab(values[0]) : "overview";
 };
+const runFromUrl = (url: URL): string | null => {
+  const values = url.searchParams.getAll("run");
+  return values.length === 1 && values[0] ? values[0] : null;
+};
+const reportHref = (id: string): string => `/?run=${encodeURIComponent(id)}#run-report`;
 
 function statusClass(status: ScenarioRun["status"]): string { return `pill pill-${status}`; }
 function Status({ status }: { status: ScenarioRun["status"] }) {
@@ -48,13 +53,13 @@ async function fetchHealthState(): Promise<HealthState> {
   }
 }
 
-export function AppClient({ initialState, initialTab }: { initialState: PersistedState; initialTab?: string }) {
+export function AppClient({ initialState, initialTab, initialRunId }: { initialState: PersistedState; initialTab?: string; initialRunId?: string }) {
   const [state, setState] = useState(initialState);
   const [tab, setTab] = useState<Tab>(parseTab(initialTab));
   const [selectedScenarioId, setSelectedScenarioId] = useState(state.scenarios[0]?.id ?? "");
   const [mode, setMode] = useState<TargetMode>("corrected");
   const [runningScenarioId, setRunningScenarioId] = useState<string | null>(null);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(state.runs[0]?.id ?? null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId ?? state.runs[0]?.id ?? null);
   const [notice, setNotice] = useState("");
   const [comparison, setComparison] = useState<ComparisonState | null>(null);
   const [importText, setImportText] = useState("");
@@ -67,7 +72,7 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
   const actionBusy = useRef(false);
   const saveBusy = useRef(false);
   const importBusy = useRef(false);
-  const focusReport = useRef(false);
+  const focusReport = useRef(Boolean(initialRunId));
   const focusComparison = useRef(false);
   const focusTabHeading = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -75,6 +80,7 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
   const project = state.projects[0];
   const selectedScenario = state.scenarios.find((item) => item.id === selectedScenarioId) ?? state.scenarios[0];
   const selectedRun = selectedRunId ? state.runs.find((item) => item.id === selectedRunId) : undefined;
+  const latestRunId = state.runs[0]?.id ?? null;
   const failures = state.runs.filter((run) => run.status === "fail");
   const scenarioById = useMemo(() => new Map(state.scenarios.map((item) => [item.id, item])), [state.scenarios]);
 
@@ -90,17 +96,19 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
   }, []);
 
   useEffect(() => {
-    const syncTab = () => {
-      const next = tabFromUrl(new URL(window.location.href));
-      setTab((current) => {
-        if (current === next) return current;
-        focusTabHeading.current = true;
-        return next;
-      });
+    const syncUrl = () => {
+      const url = new URL(window.location.href);
+      const next = tabFromUrl(url);
+      const requestedRunId = runFromUrl(url);
+      const runId = requestedRunId ?? latestRunId;
+      focusReport.current = next === "overview" && Boolean(runId) && (tab === "overview" || Boolean(requestedRunId));
+      focusTabHeading.current = !focusReport.current;
+      setSelectedRunId(runId);
+      setTab(next);
     };
-    window.addEventListener("popstate", syncTab);
-    return () => window.removeEventListener("popstate", syncTab);
-  }, []);
+    window.addEventListener("popstate", syncUrl);
+    return () => window.removeEventListener("popstate", syncUrl);
+  }, [latestRunId, tab]);
 
   useEffect(() => {
     if (tab !== "overview" || !focusReport.current) return;
@@ -130,15 +138,38 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
     const url = new URL(window.location.href);
     const currentUrlTab = tabFromUrl(url);
     if (currentUrlTab === next && tab === next) return;
-    if (next === "overview") url.searchParams.delete("tab");
-    else url.searchParams.set("tab", next);
+    if (next === "overview") {
+      url.searchParams.delete("tab");
+      if (selectedRunId) url.searchParams.set("run", selectedRunId);
+      else url.searchParams.delete("run");
+    } else url.searchParams.set("tab", next);
     url.hash = "";
-    if (currentUrlTab !== next) window.history.pushState(null, "", url);
+    if (url.href !== window.location.href) window.history.pushState(null, "", url);
     focusTabHeading.current = focusHeading;
     setTab(next);
   }
 
   function navigateToTab(next: Tab): void { showTab(next, true); }
+
+  function showReport(runId: string): void {
+    const url = new URL(reportHref(runId), window.location.href);
+    if (url.href !== window.location.href) window.history.pushState(null, "", url);
+    focusReport.current = true;
+    setSelectedRunId(runId);
+    setTab("overview");
+    if (tab === "overview" && selectedRunId === runId) {
+      const report = document.getElementById("run-report");
+      report?.scrollIntoView({ block: "start" });
+      report?.focus({ preventScroll: true });
+      focusReport.current = false;
+    }
+  }
+
+  function selectReportLink(run: ScenarioRun, event: MouseEvent<HTMLAnchorElement>): void {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    showReport(run.id);
+  }
 
   async function executeScenario(scenarioId: string, targetMode: TargetMode): Promise<ScenarioRun> {
     const response = await fetch("/api/run", {
@@ -149,7 +180,7 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
     const payload = await response.json();
     if (!payload.id) throw new Error(payload.error ?? "The runner did not return a report.");
     const run = payload as ScenarioRun;
-    setState((current) => ({ ...current, runs: [run, ...current.runs.filter((item) => item.id !== run.id)].slice(0, 100) }));
+    setState((current) => ({ ...current, runs: [run, ...current.runs.filter((item) => item.id !== run.id)] }));
     return run;
   }
 
@@ -160,8 +191,7 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
     setRunningScenarioId(scenarioId); setNotice("");
     try {
       const run = await executeScenario(scenarioId, mode);
-      focusReport.current = true;
-      setSelectedRunId(run.id); showTab("overview");
+      showReport(run.id);
       setNotice(run.status === "pass"
         ? "Scenario passed with protected-operation evidence."
         : run.status === "fail" ? "Finding captured. Review the evidence below." : `Run error: ${run.error ?? "unknown error"}`);
@@ -181,7 +211,12 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
     setComparison({ scenarioTitle: scenarioById.get(scenarioId)?.title ?? scenarioId, runs: [], status: "running" });
     focusComparison.current = true;
     setSelectedRunId(null);
-    showTab("overview");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("tab");
+    url.searchParams.delete("run");
+    url.hash = "";
+    if (url.href !== window.location.href) window.history.pushState(null, "", url);
+    setTab("overview");
     setRunningScenarioId(scenarioId); setNotice("Running the same scenario and seed against both demo behaviors…");
     try {
       const naive = await executeScenario(scenarioId, "naive");
@@ -312,7 +347,8 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
           busy={Boolean(runningScenarioId) || saving}
           runs={state.runs} failures={failures} scenarios={scenarioById} selectedRun={selectedRun} health={health}
           comparison={comparison}
-          onSelectRun={(run) => setSelectedRunId(run.id)} onRefreshHealth={() => void checkHealth()}
+          missingRun={Boolean(selectedRunId && !selectedRun)}
+          onSelectRun={selectReportLink} onRefreshHealth={() => void checkHealth()}
           onCompareDemo={() => void compareModes("stale-pre-cancellation")} onBrowse={() => navigateToTab("scenarios")}
         />}
         {tab === "policy" && <fieldset className="settings-fieldset" disabled={saving || Boolean(runningScenarioId)} aria-busy={saving}><legend className="sr-only">Project settings</legend><Setup project={project} onPolicy={updatePolicy} onToggle={toggleFeature} /><p role="status">{saving ? "Saving changes…" : runningScenarioId ? "Settings are locked while a run is active." : "Changes save automatically."}</p></fieldset>}
@@ -322,7 +358,7 @@ export function AppClient({ initialState, initialTab }: { initialState: Persiste
           onMode={setMode} onSelect={setSelectedScenarioId} onQuery={setScenarioQuery}
           onRun={(id) => void runOne(id)} onCompare={(id) => void compareModes(id)}
           onSuite={() => void runSuite()} onStopSuite={stopSuite}
-          onViewLatest={() => { focusReport.current = true; showTab("overview"); }}
+          onViewLatest={() => { if (selectedRunId) showReport(selectedRunId); else showTab("overview", true); }}
           onImportText={setImportText} onReplaceExisting={setReplaceExistingScenarios} onImport={() => void importScenarios()}
         />}
         {tab === "connection" && <Integration health={health} onRefresh={() => void checkHealth()} />}
@@ -336,11 +372,11 @@ function HealthBadge({ health, onRefresh }: { health: HealthState; onRefresh: ()
   return <button className={`health-badge health-${health.state}`} onClick={onRefresh} aria-label={`${label}. Refresh readiness.`}><span aria-hidden>●</span>{label}</button>;
 }
 
-function Overview({ runs, failures, scenarios, selectedRun, health, comparison, onSelectRun, onRefreshHealth, onCompareDemo, onBrowse, busy }: {
+function Overview({ runs, failures, scenarios, selectedRun, missingRun, health, comparison, onSelectRun, onRefreshHealth, onCompareDemo, onBrowse, busy }: {
   busy: boolean;
-  runs: ScenarioRun[]; failures: ScenarioRun[]; scenarios: Map<string, Scenario>; selectedRun?: ScenarioRun; health: HealthState;
+  runs: ScenarioRun[]; failures: ScenarioRun[]; scenarios: Map<string, Scenario>; selectedRun?: ScenarioRun; missingRun: boolean; health: HealthState;
   comparison: ComparisonState | null;
-  onSelectRun: (run: ScenarioRun) => void; onRefreshHealth: () => void; onCompareDemo: () => void; onBrowse: () => void;
+  onSelectRun: (run: ScenarioRun, event: MouseEvent<HTMLAnchorElement>) => void; onRefreshHealth: () => void; onCompareDemo: () => void; onBrowse: () => void;
 }) {
   const latest = runs[0];
   const [visibleCount, setVisibleCount] = useState(10);
@@ -358,25 +394,26 @@ function Overview({ runs, failures, scenarios, selectedRun, health, comparison, 
 
     {health.state === "offline" && <section className="offline-banner"><div><strong>Start the target to enable checks</strong><p>In another terminal, open the BillProof folder and run <code>npm run target</code>. Keep it running, then check the connection.</p><details><summary>Connection details</summary><p>{health.detail}</p></details></div><button className="btn btn-secondary" onClick={onRefreshHealth}>Check connection</button></section>}
 
-    {comparison && <section className="card section-card" id="comparison-results" tabIndex={-1} aria-label="Comparison results"><div className="section-heading compact"><div><p className="eyebrow">Same scenario, both behaviors</p><h2>Compare the outcomes</h2><p>{comparison.scenarioTitle}</p></div><span className={`comparison-state comparison-state-${comparison.status}`}>{comparison.status === "complete" ? "Both reports saved" : comparison.status === "error" ? "Comparison incomplete" : "Comparison in progress"}</span></div><div className="comparison-grid">{comparison.runs.map((run) => <a href="#run-report" className={`comparison-result ${selectedRun?.id === run.id ? "is-selected" : ""}`} key={run.id} onClick={() => onSelectRun(run)}><div><strong>{run.targetMode === "naive" ? "Intentionally flawed" : "Corrected reference"}</strong><Status status={run.status} /></div><span>{run.status === "error" ? "Check could not finish" : `${run.findings.length} findings · ${run.observations.length} access checks`}</span><small>View report →</small></a>)}{comparison.runs.length < 2 && <div className="comparison-pending"><strong>{comparison.runs.length ? "Corrected reference" : "Intentionally flawed"}</strong>{comparison.status === "error" ? <p>Could not finish: {comparison.error ?? "Unknown error"}</p> : <LatticeLoader label={comparison.runs.length ? "Checking corrected reference" : "Checking flawed target"} color="#f0642e" doneColor="#40bd89" errorColor="#e86c62" fontSize={13} />}</div>}</div></section>}
+    {comparison && <section className="card section-card" id="comparison-results" tabIndex={-1} aria-label="Comparison results"><div className="section-heading compact"><div><p className="eyebrow">Same scenario, both behaviors</p><h2>Compare the outcomes</h2><p>{comparison.scenarioTitle}</p></div><span className={`comparison-state comparison-state-${comparison.status}`}>{comparison.status === "complete" ? "Both reports saved" : comparison.status === "error" ? "Comparison incomplete" : "Comparison in progress"}</span></div><div className="comparison-grid">{comparison.runs.map((run) => <a href={reportHref(run.id)} className={`comparison-result ${selectedRun?.id === run.id ? "is-selected" : ""}`} key={run.id} onClick={(event) => onSelectRun(run, event)}><div><strong>{run.targetMode === "naive" ? "Intentionally flawed" : "Corrected reference"}</strong><Status status={run.status} /></div><span>{run.status === "error" ? "Check could not finish" : `${run.findings.length} findings · ${run.observations.length} access checks`}</span><small>View report →</small></a>)}{comparison.runs.length < 2 && <div className="comparison-pending"><strong>{comparison.runs.length ? "Corrected reference" : "Intentionally flawed"}</strong>{comparison.status === "error" ? <p>Could not finish: {comparison.error ?? "Unknown error"}</p> : <LatticeLoader label={comparison.runs.length ? "Checking corrected reference" : "Checking flawed target"} color="#f0642e" doneColor="#40bd89" errorColor="#e86c62" fontSize={13} />}</div>}</div></section>}
 
     <section className="metric-grid" aria-label="Run summary">
       <Metric label="Recorded runs" value={String(runs.length)} note="Persisted local reports" />
-      <Metric label="Findings" value={String(failures.reduce((sum, run) => sum + run.findings.length, 0))} note={`${failures.length} failing run${failures.length === 1 ? "" : "s"}`} tone={failures.length ? "red" : "green"} />
-      <Metric label="Latest result" value={latest ? latest.status : "—"} note={latest ? `${latest.targetMode} · ${date(latest.completedAt)}` : "No run recorded"} tone={latest?.status === "pass" ? "green" : latest ? "red" : undefined} />
+      <Metric label="Findings" value={String(failures.reduce((sum, run) => sum + run.findings.length, 0))} note={`${failures.length} failing run${failures.length === 1 ? "" : "s"}`} tone={failures.length ? "red" : runs.length > 0 && runs.every((run) => run.status === "pass") ? "green" : undefined} />
+      <Metric label="Latest result" value={latest ? latest.status : "—"} note={latest ? `${latest.targetMode} · ${date(latest.completedAt)}` : "No run recorded"} tone={latest?.status === "pass" ? "green" : latest?.status === "fail" ? "red" : latest?.status === "error" ? "amber" : undefined} />
     </section>
 
+    {missingRun && <div className="notice" role="alert">This report is not saved on this device. Choose an available report from Run history below.</div>}
     {selectedRun && <RunDetail key={selectedRun.id} run={selectedRun} />}
     <section className="card section-card" id="run-history" aria-label="Run history">
       <div className="section-heading"><div><p className="eyebrow">Saved on this device</p><h2>Run history</h2><p>Open a report to inspect or replay a previous check.</p></div><button className="btn btn-secondary" onClick={onBrowse}>New check</button></div>
       {runs.length > 0 && <div className="history-filters"><label><span className="label">Find a report</span><input type="search" className="control" placeholder="Search scenario or behavior…" value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(10); }} /></label><label><span className="label">Result</span><select className="control" value={resultFilter} onChange={(event) => { setResultFilter(event.target.value); setVisibleCount(10); }}><option value="all">All results</option><option value="fail">Findings</option><option value="error">Errors</option><option value="pass">Passed</option><option value="skipped">Skipped</option></select></label><span role="status">{filtered.length} reports</span></div>}
-      {runs.length === 0 ? <Empty text="Your first report will appear here. Start with Compare demo targets above." /> : filtered.length === 0 ? <div className="empty-state"><p>No reports match these filters.</p><button className="btn btn-secondary" onClick={() => { setQuery(""); setResultFilter("all"); }}>Clear filters</button></div> : <ul className="history-list">{filtered.slice(0, visibleCount).map((run) => <li key={run.id}><a href="#run-report" aria-current={selectedRun?.id === run.id ? "true" : undefined} onClick={() => onSelectRun(run)}><div className="history-title"><strong>{run.scenarioTitle}</strong><span>{run.targetMode} · {date(run.completedAt)} UTC</span></div><span className="history-findings">{run.findings.length} findings{run.warnings?.length ? " · cleanup warning" : ""}</span><Status status={run.status} /><span aria-hidden>↗</span></a></li>)}</ul>}
+      {runs.length === 0 ? <Empty text="Your first report will appear here. Start with Compare demo targets above." /> : filtered.length === 0 ? <div className="empty-state"><p>No reports match these filters.</p><button className="btn btn-secondary" onClick={() => { setQuery(""); setResultFilter("all"); }}>Clear filters</button></div> : <ul className="history-list">{filtered.slice(0, visibleCount).map((run) => <li key={run.id}><a href={reportHref(run.id)} aria-current={selectedRun?.id === run.id ? "true" : undefined} onClick={(event) => onSelectRun(run, event)}><div className="history-title"><strong>{run.scenarioTitle}</strong><span>{run.targetMode} · {date(run.completedAt)} UTC</span></div><span className="history-findings">{run.findings.length} findings{run.warnings?.length ? " · cleanup warning" : ""}</span><Status status={run.status} /><span aria-hidden>↗</span></a></li>)}</ul>}
       {filtered.length > visibleCount && <button className="btn btn-secondary mt-4" onClick={() => setVisibleCount((count) => count + 10)}>Show 10 more reports</button>}
     </section>
   </div>;
 }
 
-function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "red" | "green" }) {
+function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "red" | "green" | "amber" }) {
   return <div className="metric-card"><span>{label}</span><strong className={tone ? `metric-${tone}` : undefined}>{value}</strong><small>{note}</small></div>;
 }
 function Empty({ text }: { text: string }) { return <div className="empty-state">{text}</div>; }
@@ -464,7 +501,7 @@ function RunDetail({ run }: { run: ScenarioRun }) {
   const verdict = run.status === "pass" ? "All recorded checks matched the rules." : run.status === "fail" ? `${run.findings.length} finding${run.findings.length === 1 ? " needs" : "s need"} your attention.` : run.status === "error" ? "This check could not finish." : "This check was skipped.";
   return <section id="run-report" tabIndex={-1} className="card report-card" aria-label="Run report"><header className="report-header"><div><p className="eyebrow">Selected report</p><div className="report-title"><h2>{run.scenarioTitle}</h2><Status status={run.status} /></div><p>{run.targetMode} behavior · customer fixture <code>{run.inputs?.scenario.customerId ?? run.findings[0]?.customerId ?? "unavailable in legacy report"}</code> · completed {date(run.completedAt)} UTC</p></div><div className="report-actions"><a className="btn btn-secondary" href={`/api/export?run=${encodeURIComponent(run.id)}`} download>Download report</a><button className="btn btn-secondary" onClick={() => void copyCommand()}>Copy replay command</button><span role="status">{copyStatus}</span></div></header>
     <div className={`report-verdict verdict-${run.status}`}><strong>{verdict}</strong><p>{run.status === "pass" ? "This result covers this scenario and policy. Explore other lifecycle checks for broader coverage." : run.status === "fail" ? run.targetMode === "naive" ? "This target is intentionally flawed. Compare with the corrected reference to see the difference." : "Review the findings and expected access below, then replay the report to investigate." : run.status === "error" ? "An incomplete run is not a pass. Check the error and your local connection before retrying." : "No verification result is available for this run."}</p></div>
-    <div className="report-metrics"><Metric label="Observations" value={String(run.observations.length)} note="Protected operations" /><Metric label="Mismatches" value={String(mismatches)} note="Expected vs observed" tone={mismatches ? "red" : "green"} /><Metric label="Deliveries" value={String(run.deliveryAttempts.length)} note="In recorded order" /><Metric label="HTTP records" value={String(run.evidence.length)} note="Captured responses" /></div>
+    <div className="report-metrics"><Metric label="Observations" value={String(run.observations.length)} note="Protected operations" /><Metric label="Mismatches" value={String(mismatches)} note="Expected vs observed" tone={mismatches ? "red" : run.status === "pass" && run.observations.length > 0 ? "green" : undefined} /><Metric label="Deliveries" value={String(run.deliveryAttempts.length)} note="In recorded order" /><Metric label="HTTP records" value={String(run.evidence.length)} note="Captured responses" /></div>
     {run.error && <div className="error-banner"><strong>Execution error</strong><span>{run.error}</span></div>}
     {run.warnings?.map((warning, index) => <div className="error-banner" role="status" key={index}><strong>Cleanup warning</strong><span>{warning}</span></div>)}
     {run.findings.length > 0 && <section className="report-section"><div className="section-heading compact"><div><p className="eyebrow">Requires attention</p><h3>{run.findings.length} access finding{run.findings.length === 1 ? "" : "s"}</h3></div></div><div className="finding-grid">{run.findings.map((finding) => <article key={finding.id} className="finding-card"><div><span className="pill pill-fail">{finding.severity}</span><code>{finding.featureId ?? "side effect"}</code></div><h4>{finding.title}</h4><p><strong>Expected:</strong> {finding.expected}<br /><strong>Observed:</strong> {finding.observed}</p><p><strong>Hypothesis:</strong> {finding.rootCauseHypothesis.replace(/^Hypothesis:\s*/i, "")}</p><p><strong>Suggested fix:</strong> {finding.suggestedFix}</p></article>)}</div></section>}

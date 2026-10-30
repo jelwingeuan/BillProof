@@ -4,6 +4,8 @@ Notable changes to BillProof are recorded here.
 
 ## Unreleased — 0.2.0
 
+- Preserved all saved reports and made report links restore the selected run across refresh and browser history. Opening a report from the workbench moves keyboard focus to it.
+- Matched summary colors to pass, finding, error, and skipped states.
 - Applied Excon across the workbench, reports, controls, evidence, and IDs, with Geist Sans as the offline fallback.
 - Preserved workspace sections in shareable URLs and browser history, and reduced duplicate suite announcements.
 - Gave the local workbench a dark verification layout with direct run actions and evidence-focused reports.
