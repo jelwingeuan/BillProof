@@ -4,7 +4,7 @@
 
 BillProof checks whether a subscription application's **actual protected operations** match explicit access rules. This MVP is a local, deterministic demonstration. It uses simulated billing events and sample data; it does not connect to Stripe, Supabase, or a customer system.
 
-The interface, including evidence and IDs, uses [Author](https://www.fontshare.com/fonts/author) from Fontshare when online, with bundled Geist Sans as its offline fallback. Fontshare serves the Author file directly; it is not redistributed in this repository under the ITF Free Font License.
+The entire interface, including evidence and IDs, uses [Excon](https://www.fontshare.com/fonts/excon) from Fontshare when online, with bundled Geist Sans as its offline fallback. Fontshare serves the Excon file directly; it is not redistributed in this repository under the [ITF Free Font License](https://www.fontshare.com/licenses/itf-ffl).
 
 ## Quick start
 
