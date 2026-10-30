@@ -95,12 +95,13 @@ test("readiness rejects a target connected to a different provider", async () =>
   }
 });
 
-test("readiness and doctor accept a custom target identity but reject an empty one", async () => {
+test("readiness and doctor accept a custom target identity but require a reachable provider", async () => {
   const sample = await startSampleTarget({ targetPort: 0, providerPort: 0 });
   let service: unknown = "merchant-staging";
+  let providerUrl = sample.providerUrl;
   const custom = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ ok: true, service, contractVersion: 2, provider: sample.providerUrl }));
+    response.end(JSON.stringify({ ok: true, service, contractVersion: 2, provider: providerUrl }));
   });
   const previousTarget = process.env.BILLPROOF_TARGET_URL;
   const previousProvider = process.env.BILLPROOF_PROVIDER_URL;
@@ -128,6 +129,13 @@ test("readiness and doctor accept a custom target identity but reject an empty o
       assert.match((error as { stdout: string }).stdout, /FAIL  target implements contract v2/);
       return true;
     });
+
+    service = "merchant-staging";
+    providerUrl = "http://127.0.0.1:9";
+    process.env.BILLPROOF_PROVIDER_URL = providerUrl;
+    const unavailable = await health();
+    assert.equal(unavailable.status, 503);
+    assert.match((await unavailable.json()).detail, /Could not reach the local provider/);
   } finally {
     if (previousTarget === undefined) delete process.env.BILLPROOF_TARGET_URL;
     else process.env.BILLPROOF_TARGET_URL = previousTarget;

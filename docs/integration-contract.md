@@ -18,7 +18,7 @@ Set `BILLPROOF_TARGET_URL` and `BILLPROOF_PROVIDER_URL` to HTTP loopback origins
 
 Fixture-mutating requests include a `scenarioId`. Reset also receives `customerId`, `mode`, and the validated project. Clock requests receive an ISO UTC `at`. Webhook requests receive `{ scenarioId, event, retry }`.
 
-Choose a nonempty `service` name for your target; the bundled sample uses `billproof-sample-target`. The health response must report the exact configured provider URL and contract version 2. BillProof checks these before enabling dashboard runs.
+Choose a nonempty `service` name for your target; the bundled sample uses `billproof-sample-target`. The health response must report the exact configured provider URL and contract version 2. Before enabling dashboard runs, BillProof also checks that the provider returns an isolated `404` for an unknown fixture.
 
 Every protected-operation response must identify the feature actually served in `featureId`, including denied responses. BillProof rejects a response when `featureId` is absent or differs from the feature being probed. A custom `protectedPath` is supported, but its response still must identify the requested feature. Update custom targets that only return `ok` before using contract v2. Previously saved v1 run reports remain readable.
 
