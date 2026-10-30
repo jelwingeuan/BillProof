@@ -30,7 +30,7 @@ All three processes bind to loopback. The dashboard runs on port 3000, the targe
 
 ## Production build for local use
 
-Run `npm ci`, `npm test`, and `npm run build`. Keep `npm run target` running in one terminal and run `npm start` in another. Use `npm run dev` only while developing. Keep the checkout and data on a local disk and use one dashboard process. Stop both processes with Ctrl-C before upgrading or restoring data. The target is simulated in both development and production builds.
+Run `npm ci`, `npm test`, `npm run build`, and `npm run smoke:production`. The smoke check starts isolated local processes, runs one corrected scenario through the built dashboard, and cleans up. Keep `npm run target` running in one terminal and run `npm start` in another for normal use. Use `npm run dev` only while developing. Keep the checkout and data on a local disk and use one dashboard process. Stop both processes with Ctrl-C before upgrading or restoring data. The target is simulated in both development and production builds.
 
 ## Commands
 
@@ -43,6 +43,7 @@ npm test
 npm run lint
 npm run typecheck
 npm run build
+npm run smoke:production       # verify the built dashboard and sample target together
 ```
 
 The CLI exits `0` for a passing run, `1` for findings, and `2` for execution errors. Use `--help` for its small local contract. Run `npm run doctor` while the target is running to diagnose setup problems before opening the dashboard.
