@@ -11,6 +11,8 @@ type SuiteState = {
   completed: number;
   total: number;
   current?: string;
+  startedAtMs?: number;
+  elapsedSeconds?: number;
   counts: Record<ScenarioRun["status"], number>;
 };
 type ComparisonState = { scenarioTitle: string; runs: ScenarioRun[]; status: "running" | "complete" | "error"; error?: string };
@@ -37,9 +39,10 @@ function statusClass(status: ScenarioRun["status"]): string { return `pill pill-
 function Status({ status }: { status: ScenarioRun["status"] }) {
   return <span className={statusClass(status)}><span aria-hidden>●</span>{status}</span>;
 }
-function date(value: string): string {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
+const dateFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" });
+const preciseDateFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", dateStyle: "medium", timeStyle: "medium" });
+function date(value: string): string { return dateFormatter.format(new Date(value)); }
+function preciseDate(value: string): string { return preciseDateFormatter.format(new Date(value)); }
 
 async function fetchHealthState(): Promise<HealthState> {
   try {
@@ -72,6 +75,7 @@ export function AppClient({ initialState, initialTab, initialRunId }: { initialS
   const actionBusy = useRef(false);
   const saveBusy = useRef(false);
   const importBusy = useRef(false);
+  const focusImportedScenario = useRef(false);
   const focusReport = useRef(Boolean(initialRunId));
   const focusComparison = useRef(false);
   const focusTabHeading = useRef(false);
@@ -133,6 +137,15 @@ export function AppClient({ initialState, initialTab, initialRunId }: { initialS
     window.scrollTo(0, 0);
     focusTabHeading.current = false;
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "scenarios" || !focusImportedScenario.current) return;
+    const selection = document.getElementById("selected-scenario");
+    if (!selection) return;
+    selection.scrollIntoView({ block: "start" });
+    selection.focus({ preventScroll: true });
+    focusImportedScenario.current = false;
+  }, [tab, selectedScenarioId, scenarioQuery, state.scenarios]);
 
   function showTab(next: Tab, focusHeading = false): void {
     const url = new URL(window.location.href);
@@ -244,14 +257,15 @@ export function AppClient({ initialState, initialTab, initialRunId }: { initialS
     setComparison(null);
     setNotice("");
     const counts = emptyCounts();
-    setSuite({ status: "running", completed: 0, total: state.scenarios.length, current: state.scenarios[0]?.title, counts: { ...counts } });
+    const startedAtMs = performance.now();
+    setSuite({ status: "running", completed: 0, total: state.scenarios.length, current: state.scenarios[0]?.title, startedAtMs, counts: { ...counts } });
     let completed = 0;
     let requestError = "";
     let lastRun: ScenarioRun | undefined;
     for (const item of state.scenarios) {
       if (suiteStopRequested.current) break;
       setRunningScenarioId(item.id);
-      setSuite({ status: "running", completed, total: state.scenarios.length, current: item.title, counts: { ...counts } });
+      setSuite({ status: "running", completed, total: state.scenarios.length, current: item.title, startedAtMs, counts: { ...counts } });
       try {
         const run = await executeScenario(item.id, mode);
         counts[run.status] += 1;
@@ -260,17 +274,18 @@ export function AppClient({ initialState, initialTab, initialRunId }: { initialS
         requestError = error instanceof Error ? error.message : "unknown suite error";
       }
       if (!requestError) completed += 1;
-      setSuite({ status: suiteStopRequested.current ? "stopping" : "running", completed, total: state.scenarios.length, current: item.title, counts: { ...counts } });
+      setSuite({ status: suiteStopRequested.current ? "stopping" : "running", completed, total: state.scenarios.length, current: item.title, startedAtMs, counts: { ...counts } });
       if (requestError) break;
     }
     actionBusy.current = false;
     setRunningScenarioId(null);
     if (lastRun) setSelectedRunId(lastRun.id);
+    const elapsedSeconds = Math.max(0, (performance.now() - startedAtMs) / 1000);
     if (suiteStopRequested.current) {
-      setSuite({ status: "cancelled", completed, total: state.scenarios.length, counts: { ...counts } });
+      setSuite({ status: "cancelled", completed, total: state.scenarios.length, startedAtMs, elapsedSeconds, counts: { ...counts } });
       setNotice(`Suite stopped after ${completed} of ${state.scenarios.length} scenarios. The in-flight run was allowed to finish and remains in evidence.`);
     } else {
-      setSuite({ status: requestError ? "error" : "complete", completed, total: state.scenarios.length, counts: { ...counts } });
+      setSuite({ status: requestError ? "error" : "complete", completed, total: state.scenarios.length, startedAtMs, elapsedSeconds, counts: { ...counts } });
       setNotice(requestError ? `Suite stopped on a request error: ${requestError}` : `Suite complete: ${counts.pass} passed, ${counts.fail} with findings, ${counts.error} errors, ${counts.skipped} skipped.`);
     }
     void checkHealth();
@@ -309,7 +324,10 @@ export function AppClient({ initialState, initialTab, initialRunId }: { initialS
       if (!response.ok) throw new Error(payload.error ?? "Scenario import was rejected.");
       const imported = payload.scenarios as Scenario[];
       setState((current) => ({ ...current, scenarios: [...current.scenarios.filter((old) => !imported.some((item) => item.id === old.id)), ...imported] }));
-      setNotice(`${imported.length} JSON scenario${imported.length === 1 ? "" : "s"} validated and saved locally.${replaceExistingScenarios ? " Matching IDs were replaced where present." : ""}`);
+      setScenarioQuery("");
+      setSelectedScenarioId(imported[0].id);
+      focusImportedScenario.current = true;
+      setNotice(`${imported.length} JSON scenario${imported.length === 1 ? "" : "s"} validated and saved locally. The first imported scenario is selected.${replaceExistingScenarios ? " Matching IDs were replaced where present." : ""}`);
       setImportText("");
       setReplaceExistingScenarios(false);
     } catch (error) {
@@ -382,7 +400,10 @@ function Overview({ runs, failures, scenarios, selectedRun, missingRun, health, 
   const [visibleCount, setVisibleCount] = useState(10);
   const [query, setQuery] = useState("");
   const [resultFilter, setResultFilter] = useState("all");
-  const filtered = runs.filter((run) => (resultFilter === "all" || run.status === resultFilter) && `${run.scenarioTitle} ${run.targetMode}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const search = query.trim().toLowerCase();
+  const filtered = runs.filter((run) => (resultFilter === "all" || run.status === resultFilter) && (
+    !search || `${run.scenarioTitle} ${run.targetMode} ${run.id} ${run.inputs?.scenario.customerId ?? run.findings[0]?.customerId ?? ""} ${run.completedAt} ${preciseDate(run.completedAt)}`.toLowerCase().includes(search)
+  ));
   return <div className="content-stack">
     <section className="hero-panel">
       <p className="hero-kicker">BillProof / verification workbench</p>
@@ -406,8 +427,8 @@ function Overview({ runs, failures, scenarios, selectedRun, missingRun, health, 
     {selectedRun && <RunDetail key={selectedRun.id} run={selectedRun} />}
     <section className="card section-card" id="run-history" aria-label="Run history">
       <div className="section-heading"><div><p className="eyebrow">Saved on this device</p><h2>Run history</h2><p>Open a report to inspect or replay a previous check.</p></div><button className="btn btn-secondary" onClick={onBrowse}>New check</button></div>
-      {runs.length > 0 && <div className="history-filters"><label><span className="label">Find a report</span><input type="search" className="control" placeholder="Search scenario or behavior…" value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(10); }} /></label><label><span className="label">Result</span><select className="control" value={resultFilter} onChange={(event) => { setResultFilter(event.target.value); setVisibleCount(10); }}><option value="all">All results</option><option value="fail">Findings</option><option value="error">Errors</option><option value="pass">Passed</option><option value="skipped">Skipped</option></select></label><span role="status">{filtered.length} reports</span></div>}
-      {runs.length === 0 ? <Empty text="Your first report will appear here. Start with Compare demo targets above." /> : filtered.length === 0 ? <div className="empty-state"><p>No reports match these filters.</p><button className="btn btn-secondary" onClick={() => { setQuery(""); setResultFilter("all"); }}>Clear filters</button></div> : <ul className="history-list">{filtered.slice(0, visibleCount).map((run) => <li key={run.id}><a href={reportHref(run.id)} aria-current={selectedRun?.id === run.id ? "true" : undefined} onClick={(event) => onSelectRun(run, event)}><div className="history-title"><strong>{run.scenarioTitle}</strong><span>{run.targetMode} · {date(run.completedAt)} UTC</span></div><span className="history-findings">{run.findings.length} findings{run.warnings?.length ? " · cleanup warning" : ""}</span><Status status={run.status} /><span aria-hidden>↗</span></a></li>)}</ul>}
+      {runs.length > 0 && <div className="history-filters"><label><span className="label">Find a report</span><input type="search" className="control" placeholder="Search title, ID, customer, or UTC date…" value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(10); }} /></label><label><span className="label">Result</span><select className="control" value={resultFilter} onChange={(event) => { setResultFilter(event.target.value); setVisibleCount(10); }}><option value="all">All results</option><option value="fail">Findings</option><option value="error">Errors</option><option value="pass">Passed</option><option value="skipped">Skipped</option></select></label><span role="status">{filtered.length} reports</span></div>}
+      {runs.length === 0 ? <Empty text="Your first report will appear here. Start with Compare demo targets above." /> : filtered.length === 0 ? <div className="empty-state"><p>No reports match these filters.</p><button className="btn btn-secondary" onClick={() => { setQuery(""); setResultFilter("all"); }}>Clear filters</button></div> : <ul className="history-list">{filtered.slice(0, visibleCount).map((run) => <li key={run.id}><a href={reportHref(run.id)} aria-current={selectedRun?.id === run.id ? "true" : undefined} onClick={(event) => onSelectRun(run, event)}><div className="history-title"><strong>{run.scenarioTitle}</strong><span>{run.targetMode} · {preciseDate(run.completedAt)} UTC · <code title={run.id}>{run.id.slice(0, 12)}</code></span></div><span className="history-findings">{run.findings.length} findings{run.warnings?.length ? " · cleanup warning" : ""}</span><Status status={run.status} /><span aria-hidden>↗</span></a></li>)}</ul>}
       {filtered.length > visibleCount && <button className="btn btn-secondary mt-4" onClick={() => setVisibleCount((count) => count + 10)}>Show 10 more reports</button>}
     </section>
   </div>;
@@ -468,7 +489,7 @@ export function SuiteProgress({ suite, onViewLatest }: { suite: SuiteState; onVi
   const status = allPassed ? "done" : busy ? "working" : "error";
   const errorLabel = suite.status === "cancelled" ? "Suite stopped after" : suite.status === "error" ? "Suite interrupted after" : "Suite finished with issues after";
   const percent = suite.total ? Math.round((suite.completed / suite.total) * 100) : 0;
-  return <section className="suite-progress"><div><LatticeLoader status={status} announce={busy} label={suite.status === "stopping" ? "Stopping suite" : "Running suite"} doneLabel="All checks passed in" errorLabel={errorLabel} color="#f0642e" doneColor="#6ed7a7" errorColor="#ff8179" fontSize={13} /><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" role="progressbar" aria-label="Suite progress" aria-valuenow={suite.completed} aria-valuemin={0} aria-valuemax={suite.total}><span style={{ width: `${percent}%` }} /></div><div className="suite-outcomes"><span>{suite.counts.pass} passed</span><span>{suite.counts.fail} with findings</span><span>{suite.counts.error} errors</span><span>{suite.counts.skipped} skipped</span>{!busy && suite.completed > 0 && <button className="btn btn-secondary" onClick={onViewLatest}>View latest report</button>}</div></section>;
+  return <section className="suite-progress"><div><LatticeLoader status={status} announce={busy} label={suite.status === "stopping" ? "Stopping suite" : "Running suite"} doneLabel="All checks passed in" errorLabel={errorLabel} startedAtMs={suite.startedAtMs} elapsed={busy ? undefined : suite.elapsedSeconds} color="#f0642e" doneColor="#6ed7a7" errorColor="#ff8179" fontSize={13} /><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" role="progressbar" aria-label="Suite progress" aria-valuenow={suite.completed} aria-valuemin={0} aria-valuemax={suite.total}><span style={{ width: `${percent}%` }} /></div><div className="suite-outcomes"><span>{suite.counts.pass} passed</span><span>{suite.counts.fail} with findings</span><span>{suite.counts.error} errors</span><span>{suite.counts.skipped} skipped</span>{!busy && suite.completed > 0 && <button className="btn btn-secondary" onClick={onViewLatest}>View latest report</button>}</div></section>;
 }
 
 function Integration({ health, onRefresh }: { health: HealthState; onRefresh: () => void }) {

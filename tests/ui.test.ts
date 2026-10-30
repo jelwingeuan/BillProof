@@ -54,6 +54,8 @@ test("report bookmarks restore the exact saved run and explain missing IDs", () 
   const bookmarked = renderToStaticMarkup(createElement(AppClient, { initialState: state, initialRunId: "older" }));
   assert.match(bookmarked, /Selected report<\/p><div class="report-title"><h2>Older report<\/h2>/);
   assert.match(bookmarked, /href="\/\?run=older#run-report"/);
+  assert.match(bookmarked, /Search title, ID, customer, or UTC date/);
+  assert.match(bookmarked, /1 Jan 2026, 00:00:00 UTC/);
   const unavailable = renderToStaticMarkup(createElement(AppClient, { initialState: state, initialRunId: "removed" }));
   assert.match(unavailable, /This report is not saved on this device/);
   assert.doesNotMatch(unavailable, /Selected report<\/p>/);
@@ -61,9 +63,11 @@ test("report bookmarks restore the exact saved run and explain missing IDs", () 
 
 test("React Bits suite verdict reflects findings instead of showing a success mark", () => {
   const base = { status: "complete" as const, completed: 2, total: 2, counts: { pass: 2, fail: 0, error: 0, skipped: 0 } };
-  const allPass = renderToStaticMarkup(createElement(SuiteProgress, { suite: base, onViewLatest: () => {} }));
+  const allPass = renderToStaticMarkup(createElement(SuiteProgress, { suite: { ...base, elapsedSeconds: 4.7 }, onViewLatest: () => {} }));
   assert.match(allPass, /data-status="done"/);
   assert.match(allPass, /All checks passed in/);
+  assert.match(allPass, /4\.7s/);
+  assert.match(allPass, /4\.7 seconds/);
   assert.doesNotMatch(allPass, /role="status"/);
 
   const working = renderToStaticMarkup(createElement(SuiteProgress, { suite: { ...base, status: "running" }, onViewLatest: () => {} }));

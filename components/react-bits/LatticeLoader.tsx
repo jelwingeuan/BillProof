@@ -43,6 +43,7 @@ export interface LatticeLoaderProps {
   glowColor?: string;
   showTimer?: boolean;
   announce?: boolean;
+  startedAtMs?: number;
   elapsed?: number;
   className?: string;
   style?: CSSProperties;
@@ -110,6 +111,7 @@ const LatticeLoader: React.FC<LatticeLoaderProps> = ({
   glowColor = '',
   showTimer = true,
   announce = true,
+  startedAtMs,
   elapsed,
   className = '',
   style
@@ -121,10 +123,14 @@ const LatticeLoader: React.FC<LatticeLoaderProps> = ({
   const cycle = Math.round(pat.loop * d);
 
   const timerRef = useRef<HTMLSpanElement>(null);
-  const dsRef = useRef(0);
+  const initialDs = elapsed != null ? Math.max(0, Math.round(elapsed * 10)) : 0;
+  const dsRef = useRef(initialDs);
   const announcementRef = useRef<HTMLSpanElement>(null);
   const mark = status === 'error' ? 'error' : 'done';
   const announcement = status === 'working' ? `${label}, in progress` : status === 'done' ? doneLabel : errorLabel;
+  const initialAnnouncement = status === 'working' || elapsed == null
+    ? announcement
+    : `${announcement}${showTimer ? ` ${spoken(initialDs)}` : ''}`;
 
   const paint = (ds: number) => {
     dsRef.current = ds;
@@ -133,20 +139,21 @@ const LatticeLoader: React.FC<LatticeLoaderProps> = ({
 
   useLayoutEffect(() => {
     if (elapsed != null) {
-      paint(Math.round(elapsed * 10));
+      paint(initialDs);
       return undefined;
     }
     if (status !== 'working') return undefined;
-    const startedAt = performance.now();
-    paint(0);
-    const id = setInterval(() => paint(Math.floor((performance.now() - startedAt) / 100)), 100);
+    const startedAt = startedAtMs ?? performance.now();
+    const update = () => paint(Math.max(0, Math.floor((performance.now() - startedAt) / 100)));
+    update();
+    const id = setInterval(update, 100);
     return () => clearInterval(id);
-  }, [status, elapsed]);
+  }, [status, elapsed, startedAtMs, initialDs]);
 
   useEffect(() => {
     if (announcementRef.current) announcementRef.current.textContent =
       status === 'working' ? announcement : `${announcement}${showTimer ? ` ${spoken(dsRef.current)}` : ''}`;
-  }, [status, announcement, showTimer]);
+  }, [status, announcement, showTimer, elapsed]);
 
   return (
     <span
@@ -202,10 +209,10 @@ const LatticeLoader: React.FC<LatticeLoaderProps> = ({
       </span>
       {showTimer ? (
         <span ref={timerRef} className="lattice-loader__timer" aria-hidden="true">
-          0.0s
+          {fmt(initialDs)}
         </span>
       ) : null}
-      <span ref={announcementRef} className="lattice-loader__sr">{announcement}</span>
+      <span ref={announcementRef} className="lattice-loader__sr">{initialAnnouncement}</span>
     </span>
   );
 };

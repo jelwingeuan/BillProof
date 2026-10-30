@@ -26,6 +26,8 @@ npm run dev
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000) and click **Compare demo targets**. The same scenario produces a failure in naive mode and a pass in corrected mode. Open **Scenarios** to run individual checks or the full suite.
 
+After importing scenario JSON, BillProof selects the first imported scenario so it is ready to run. Run history shows report IDs and second-precision UTC times; search accepts a title, behavior, report ID, customer fixture ID, or UTC date.
+
 Workspace sections have bookmarkable links such as `?tab=scenarios` and `?tab=policy`. Saved reports have links such as `?run=<report-id>#run-report`. Back and Forward restore the selected section and report. These links work only with reports stored on the same BillProof installation.
 
 All three processes bind to loopback. The dashboard runs on port 3000, the target on 4100, and the provider on 4101. Host/origin checks reject browser requests from other sites. Outbound target URLs must be HTTP loopback origins and redirects are rejected. This is a trusted, single-operator workstation tool; there is no user authentication, public hosting, or tenant isolation.
@@ -56,7 +58,7 @@ The CLI exits `0` for a passing run, `1` for findings, and `2` for execution err
 2. Click **Compare demo targets** or select `stale-pre-cancellation`.
 3. Run the naive target. A newer cancellation is followed by an old active snapshot with the same event timestamp; the naive handler restores Pro access. The report records the protected `/protected/exports` response that proves it.
 4. Select corrected mode. The target obtains the latest provider state over its own local HTTP interface, so the same stale delivery cannot restore access.
-5. Run **Duplicate payment delivery** in corrected mode. Its effect count is exactly one, even though the identical event ID is delivered twice.
+5. Run **Duplicate payment delivery** in corrected mode. Its effect count is exactly one after two identical event deliveries. The corrected sample target also handles concurrent duplicates.
 
 Completed runs, plans, rules, and scenario definitions persist in `data/billproof.json`. Writes validate the full document, acquire a cross-process filesystem lock, flush a private temporary file, and atomically replace the document. Concurrent edits preserve unrelated records; stale policy edits are rejected. A corrupt file is never silently reset. Reports have no automatic count limit; back up the file regularly because it grows with use.
 
@@ -80,6 +82,7 @@ If a crash leaves `data/billproof.json.lock`, saves fail safely after five secon
 ## Important limits
 
 - The billing provider and target are simulations. This does **not** validate a live Stripe integration or prove every possible billing behavior.
+- Reports currently share one JSON document. Every save rewrites it, and the dashboard loads the full history; large histories can slow down the local tool.
 - Operations default to a two-second timeout and runs have a 60-second deadline. Access checks retry inside the configured convergence window before reporting a mismatch. JSON requests and target responses are limited to 100 KB. Imports contain 1–50 unique scenarios (up to 100 steps each), with at most 200 saved scenarios.
 - Explicit access assertions compare the final observation of that feature; effect assertions check the final effect count. Runs without checks or with unrecovered failed deliveries return an error. Run fixtures are unique and released on completion.
 - A probe that does not complete within the convergence window returns an execution error; a completed mismatch remains a finding. Cleanup failures are retained as report warnings and shown in the dashboard and CLI.

@@ -12,6 +12,7 @@ type TargetFixture = {
   processedEventIds: Set<string>;
   transientFailures: Set<string>;
   creditGrantCount: number;
+  webhookTail?: Promise<void>;
 };
 
 
@@ -53,16 +54,30 @@ function sampleTargetFeatures(project: Project, snapshot: SubscriptionSnapshot, 
   return (usePaidPlan ? paidPlan : freePlan).featureIds;
 }
 
-async function reconcile(fixtureKey: string, providerUrl: string, targetFixtures: Map<string, TargetFixture>): Promise<void> {
-  const fixture = targetFixtures.get(fixtureKey);
-  if (!fixture) return;
+async function reconcile(fixtureKey: string, providerUrl: string, fixture: TargetFixture, requireState = false): Promise<void> {
   const response = await fetch(`${providerUrl}/provider/state?scenarioId=${encodeURIComponent(fixtureKey)}`, { signal: AbortSignal.timeout(2_000), redirect: "error" });
-  if (response.status === 404) return;
+  if (response.status === 404) {
+    if (requireState) throw new Error("Provider state is missing for webhook reconciliation.");
+    return;
+  }
   if (!response.ok) throw new Error(`Provider read failed with ${response.status}.`);
   const payload = await response.json();
   const state = SubscriptionSnapshotSchema.parse((payload as { state?: unknown }).state);
   fixture.snapshot = state;
   fixture.featureIds = sampleTargetFeatures(fixture.project, state, fixture.now);
+}
+
+async function serializeWebhook(fixture: TargetFixture, process: () => Promise<void>): Promise<void> {
+  const previous = fixture.webhookTail;
+  let release!: () => void;
+  const tail = new Promise<void>((resolve) => { release = resolve; });
+  fixture.webhookTail = tail;
+  if (previous) await previous;
+  try { await process(); }
+  finally {
+    if (fixture.webhookTail === tail) fixture.webhookTail = undefined;
+    release();
+  }
 }
 
 function listen(server: ReturnType<typeof createServer>, port: number): Promise<number> {
@@ -163,7 +178,7 @@ export async function startSampleTarget(options: { targetPort?: number; provider
         const fixture = typeof body.scenarioId === "string" ? targetFixtures.get(body.scenarioId) : undefined;
         if (!fixture || typeof body.at !== "string" || Number.isNaN(Date.parse(body.at))) return send(response, 400, { error: "Known scenarioId and ISO UTC at are required" });
         fixture.now = new Date(body.at).toISOString();
-        if (fixture.mode === "corrected") await reconcile(body.scenarioId as string, providerUrl, targetFixtures);
+        if (fixture.mode === "corrected") await reconcile(body.scenarioId as string, providerUrl, fixture);
         return send(response, 200, { ok: true, at: fixture.now });
       }
       if (request.method === "POST" && url.pathname === "/webhooks") {
@@ -172,21 +187,26 @@ export async function startSampleTarget(options: { targetPort?: number; provider
         const parsed = BillingEventSchema.safeParse(body.event);
         if (!fixture || !parsed.success) return send(response, 400, { error: "Known scenarioId and valid simulated billing event are required" });
         const item = parsed.data;
-        if (item.failFirstAttempt && !fixture.transientFailures.has(item.id)) {
-          fixture.transientFailures.add(item.id);
-          return send(response, 503, { error: "Simulated transient handler failure", retryable: true });
-        }
-        if (fixture.mode === "corrected" && fixture.processedEventIds.has(item.id)) return send(response, 200, { ok: true, deduplicated: true });
-        if (fixture.mode === "corrected") {
-          await reconcile(body.scenarioId as string, providerUrl, targetFixtures);
-          fixture.processedEventIds.add(item.id);
-        } else {
-          // Deliberate demo fault: apply the received historical snapshot, regardless of current provider state or duplicate ID.
-          fixture.snapshot = item.snapshot;
-          fixture.featureIds = sampleTargetFeatures(fixture.project, item.snapshot, fixture.now);
-        }
-        if (item.type === "invoice.paid") fixture.creditGrantCount += 1;
-        return send(response, 200, { ok: true, retry: Boolean(body.retry), reconciled: fixture.mode === "corrected" });
+        const processDelivery = async () => {
+          if (item.failFirstAttempt && !fixture.transientFailures.has(item.id)) {
+            fixture.transientFailures.add(item.id);
+            return send(response, 503, { error: "Simulated transient handler failure", retryable: true });
+          }
+          if (fixture.mode === "corrected" && fixture.processedEventIds.has(item.id)) return send(response, 200, { ok: true, deduplicated: true });
+          if (fixture.mode === "corrected") {
+            await reconcile(body.scenarioId as string, providerUrl, fixture, true);
+            fixture.processedEventIds.add(item.id);
+          } else {
+            // Deliberate demo fault: apply the received historical snapshot, regardless of current provider state or duplicate ID.
+            fixture.snapshot = item.snapshot;
+            fixture.featureIds = sampleTargetFeatures(fixture.project, item.snapshot, fixture.now);
+          }
+          if (item.type === "invoice.paid") fixture.creditGrantCount += 1;
+          send(response, 200, { ok: true, retry: Boolean(body.retry), reconciled: fixture.mode === "corrected" });
+        };
+        if (fixture.mode === "corrected") await serializeWebhook(fixture, processDelivery);
+        else await processDelivery();
+        return;
       }
       if (request.method === "GET" && url.pathname.startsWith("/protected/")) {
         const scenarioId = url.searchParams.get("scenarioId");

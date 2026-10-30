@@ -57,6 +57,41 @@ test("naive target fails stale evidence, reconciled target passes same seed, dup
   } finally { await target.stop(); }
 });
 
+test("concurrent duplicate payments grant one credit and failed reconciliation remains retryable", async () => {
+  const target = await startSampleTarget({ targetPort: 0, providerPort: 0 });
+  const duplicate = findScenario("duplicate-payment-delivery");
+  const payment = duplicate?.steps.find((step) => step.kind === "delivery");
+  assert.ok(payment && payment.kind === "delivery");
+  const project = demoProject();
+  const scenarioId = "concurrent-payment";
+  const post = (url: string, body: unknown) => fetch(url, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const effects = async () => {
+    const response = await fetch(`${target.targetUrl}/test/effects?scenarioId=${scenarioId}`);
+    assert.equal(response.status, 200);
+    return (await response.json() as { creditGrantCount: number }).creditGrantCount;
+  };
+  try {
+    assert.equal((await post(`${target.targetUrl}/test/reset`, { scenarioId, mode: "corrected", project })).status, 200);
+    const withoutProvider = await Promise.all(Array.from({ length: 2 }, () => post(`${target.targetUrl}/webhooks`, { scenarioId, event: payment.event })));
+    assert.deepEqual(withoutProvider.map((response) => response.status), [500, 500]);
+    assert.equal(await effects(), 0);
+
+    assert.equal((await post(`${target.providerUrl}/provider/state`, { scenarioId, state: payment.event.snapshot })).status, 200);
+    const deliveries = await Promise.all(Array.from({ length: 16 }, () => post(`${target.targetUrl}/webhooks`, { scenarioId, event: payment.event })));
+    assert.ok(deliveries.every((response) => response.status === 200));
+    const outcomes = await Promise.all(deliveries.map((response) => response.json() as Promise<{ deduplicated?: boolean }>));
+    assert.equal(outcomes.filter((outcome) => outcome.deduplicated).length, 15);
+    assert.equal(await effects(), 1);
+
+    assert.equal((await post(`${target.targetUrl}/test/reset`, { scenarioId, mode: "naive", project })).status, 200);
+    const naive = await Promise.all(Array.from({ length: 2 }, () => post(`${target.targetUrl}/webhooks`, { scenarioId, event: payment.event })));
+    assert.ok(naive.every((response) => response.status === 200));
+    assert.equal(await effects(), 2);
+  } finally { await target.stop(); }
+});
+
 test("unreachable target returns an error report", async () => {
   const scenario = findScenario("successful-checkout");
   assert.ok(scenario);
