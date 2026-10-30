@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PersistedState, Project, Scenario, ScenarioRun, TargetMode } from "../lib/types";
 import LatticeLoader from "../components/react-bits/LatticeLoader";
 
-type Tab = "overview" | "setup" | "scenarios" | "integration";
+type Tab = "overview" | "policy" | "scenarios" | "connection";
 type HealthState = { state: "checking" | "ready" | "offline"; latencyMs?: number; detail?: string };
 type SuiteState = {
   status: "idle" | "running" | "stopping" | "complete" | "cancelled" | "error";
@@ -18,10 +18,15 @@ const emptyCounts = (): SuiteState["counts"] => ({ pass: 0, fail: 0, error: 0, s
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
-  { id: "setup", label: "Policy" },
+  { id: "policy", label: "Policy" },
   { id: "scenarios", label: "Scenarios" },
-  { id: "integration", label: "Connection" },
+  { id: "connection", label: "Connection" },
 ];
+const parseTab = (value?: string | null): Tab => tabs.find((item) => item.id === value)?.id ?? "overview";
+const tabFromUrl = (url: URL): Tab => {
+  const values = url.searchParams.getAll("tab");
+  return values.length === 1 ? parseTab(values[0]) : "overview";
+};
 
 function statusClass(status: ScenarioRun["status"]): string { return `pill pill-${status}`; }
 function Status({ status }: { status: ScenarioRun["status"] }) {
@@ -43,9 +48,9 @@ async function fetchHealthState(): Promise<HealthState> {
   }
 }
 
-export function AppClient({ initialState }: { initialState: PersistedState }) {
+export function AppClient({ initialState, initialTab }: { initialState: PersistedState; initialTab?: string }) {
   const [state, setState] = useState(initialState);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(parseTab(initialTab));
   const [selectedScenarioId, setSelectedScenarioId] = useState(state.scenarios[0]?.id ?? "");
   const [mode, setMode] = useState<TargetMode>("corrected");
   const [runningScenarioId, setRunningScenarioId] = useState<string | null>(null);
@@ -85,6 +90,19 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
   }, []);
 
   useEffect(() => {
+    const syncTab = () => {
+      const next = tabFromUrl(new URL(window.location.href));
+      setTab((current) => {
+        if (current === next) return current;
+        focusTabHeading.current = true;
+        return next;
+      });
+    };
+    window.addEventListener("popstate", syncTab);
+    return () => window.removeEventListener("popstate", syncTab);
+  }, []);
+
+  useEffect(() => {
     if (tab !== "overview" || !focusReport.current) return;
     const report = document.getElementById("run-report");
     report?.scrollIntoView({ block: "start" });
@@ -108,11 +126,19 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     focusTabHeading.current = false;
   }, [tab]);
 
-  function navigateToTab(next: Tab): void {
-    if (tab === next) return;
-    focusTabHeading.current = true;
+  function showTab(next: Tab, focusHeading = false): void {
+    const url = new URL(window.location.href);
+    const currentUrlTab = tabFromUrl(url);
+    if (currentUrlTab === next && tab === next) return;
+    if (next === "overview") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
+    url.hash = "";
+    if (currentUrlTab !== next) window.history.pushState(null, "", url);
+    focusTabHeading.current = focusHeading;
     setTab(next);
   }
+
+  function navigateToTab(next: Tab): void { showTab(next, true); }
 
   async function executeScenario(scenarioId: string, targetMode: TargetMode): Promise<ScenarioRun> {
     const response = await fetch("/api/run", {
@@ -135,7 +161,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     try {
       const run = await executeScenario(scenarioId, mode);
       focusReport.current = true;
-      setSelectedRunId(run.id); setTab("overview");
+      setSelectedRunId(run.id); showTab("overview");
       setNotice(run.status === "pass"
         ? "Scenario passed with protected-operation evidence."
         : run.status === "fail" ? "Finding captured. Review the evidence below." : `Run error: ${run.error ?? "unknown error"}`);
@@ -155,7 +181,7 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
     setComparison({ scenarioTitle: scenarioById.get(scenarioId)?.title ?? scenarioId, runs: [], status: "running" });
     focusComparison.current = true;
     setSelectedRunId(null);
-    setTab("overview");
+    showTab("overview");
     setRunningScenarioId(scenarioId); setNotice("Running the same scenario and seed against both demo behaviors…");
     try {
       const naive = await executeScenario(scenarioId, "naive");
@@ -289,17 +315,17 @@ export function AppClient({ initialState }: { initialState: PersistedState }) {
           onSelectRun={(run) => setSelectedRunId(run.id)} onRefreshHealth={() => void checkHealth()}
           onCompareDemo={() => void compareModes("stale-pre-cancellation")} onBrowse={() => navigateToTab("scenarios")}
         />}
-        {tab === "setup" && <fieldset className="settings-fieldset" disabled={saving || Boolean(runningScenarioId)} aria-busy={saving}><legend className="sr-only">Project settings</legend><Setup project={project} onPolicy={updatePolicy} onToggle={toggleFeature} /><p role="status">{saving ? "Saving changes…" : runningScenarioId ? "Settings are locked while a run is active." : "Changes save automatically."}</p></fieldset>}
+        {tab === "policy" && <fieldset className="settings-fieldset" disabled={saving || Boolean(runningScenarioId)} aria-busy={saving}><legend className="sr-only">Project settings</legend><Setup project={project} onPolicy={updatePolicy} onToggle={toggleFeature} /><p role="status">{saving ? "Saving changes…" : runningScenarioId ? "Settings are locked while a run is active." : "Changes save automatically."}</p></fieldset>}
         {tab === "scenarios" && <Scenarios
           scenarios={state.scenarios} selected={selectedScenario} mode={mode} running={runningScenarioId} suite={suite}
           query={scenarioQuery} importText={importText} replaceExisting={replaceExistingScenarios} importing={importing} health={health}
           onMode={setMode} onSelect={setSelectedScenarioId} onQuery={setScenarioQuery}
           onRun={(id) => void runOne(id)} onCompare={(id) => void compareModes(id)}
           onSuite={() => void runSuite()} onStopSuite={stopSuite}
-          onViewLatest={() => { focusReport.current = true; setTab("overview"); }}
+          onViewLatest={() => { focusReport.current = true; showTab("overview"); }}
           onImportText={setImportText} onReplaceExisting={setReplaceExistingScenarios} onImport={() => void importScenarios()}
         />}
-        {tab === "integration" && <Integration health={health} onRefresh={() => void checkHealth()} />}
+        {tab === "connection" && <Integration health={health} onRefresh={() => void checkHealth()} />}
       </section>
     </div>
   </main>;
@@ -405,7 +431,7 @@ export function SuiteProgress({ suite, onViewLatest }: { suite: SuiteState; onVi
   const status = allPassed ? "done" : busy ? "working" : "error";
   const errorLabel = suite.status === "cancelled" ? "Suite stopped after" : suite.status === "error" ? "Suite interrupted after" : "Suite finished with issues after";
   const percent = suite.total ? Math.round((suite.completed / suite.total) * 100) : 0;
-  return <section className="suite-progress"><div><LatticeLoader status={status} label={suite.status === "stopping" ? "Stopping suite" : "Running suite"} doneLabel="All checks passed in" errorLabel={errorLabel} color="#f0642e" doneColor="#6ed7a7" errorColor="#ff8179" fontSize={13} /><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" role="progressbar" aria-label="Suite progress" aria-valuenow={suite.completed} aria-valuemin={0} aria-valuemax={suite.total}><span style={{ width: `${percent}%` }} /></div><div className="suite-outcomes"><span>{suite.counts.pass} passed</span><span>{suite.counts.fail} with findings</span><span>{suite.counts.error} errors</span><span>{suite.counts.skipped} skipped</span>{!busy && suite.completed > 0 && <button className="btn btn-secondary" onClick={onViewLatest}>View latest report</button>}</div></section>;
+  return <section className="suite-progress"><div><LatticeLoader status={status} announce={busy} label={suite.status === "stopping" ? "Stopping suite" : "Running suite"} doneLabel="All checks passed in" errorLabel={errorLabel} color="#f0642e" doneColor="#6ed7a7" errorColor="#ff8179" fontSize={13} /><span>{suite.completed} / {suite.total}{suite.current ? ` · ${suite.current}` : ""}</span></div><div className="progress-track" role="progressbar" aria-label="Suite progress" aria-valuenow={suite.completed} aria-valuemin={0} aria-valuemax={suite.total}><span style={{ width: `${percent}%` }} /></div><div className="suite-outcomes"><span>{suite.counts.pass} passed</span><span>{suite.counts.fail} with findings</span><span>{suite.counts.error} errors</span><span>{suite.counts.skipped} skipped</span>{!busy && suite.completed > 0 && <button className="btn btn-secondary" onClick={onViewLatest}>View latest report</button>}</div></section>;
 }
 
 function Integration({ health, onRefresh }: { health: HealthState; onRefresh: () => void }) {

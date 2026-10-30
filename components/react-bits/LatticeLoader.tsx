@@ -42,6 +42,7 @@ export interface LatticeLoaderProps {
   glow?: boolean;
   glowColor?: string;
   showTimer?: boolean;
+  announce?: boolean;
   elapsed?: number;
   className?: string;
   style?: CSSProperties;
@@ -108,6 +109,7 @@ const LatticeLoader: React.FC<LatticeLoaderProps> = ({
   glow = false,
   glowColor = '',
   showTimer = true,
+  announce = true,
   elapsed,
   className = '',
   style
@@ -148,7 +150,7 @@ const LatticeLoader: React.FC<LatticeLoaderProps> = ({
 
   return (
     <span
-      role="status"
+      role={announce ? 'status' : undefined}
       className={`lattice-loader${className ? ` ${className}` : ''}`}
       data-status={status}
       data-shape={shape}

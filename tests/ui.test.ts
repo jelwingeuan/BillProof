@@ -12,6 +12,11 @@ test("workspace explains first use and distinguishes incomplete reports from pas
   const empty = renderToStaticMarkup(createElement(AppClient, { initialState: state }));
   assert.match(empty, /Checking sample target before checks can run/);
   assert.match(empty, /disabled="">Compare demo targets/);
+  const connection = renderToStaticMarkup(createElement(AppClient, { initialState: state, initialTab: "connection" }));
+  assert.match(connection, /<h1[^>]*>Local connection<\/h1>/);
+  assert.match(connection, /aria-current="page">Connection<\/button>/);
+  const invalid = renderToStaticMarkup(createElement(AppClient, { initialState: state, initialTab: "unknown" }));
+  assert.match(invalid, /<h1[^>]*>Verify subscription access\.<\/h1>/);
   const scenario = DEMO_SCENARIOS[0];
   const report: ScenarioRun = {
     id: "ui-test", projectId: state.projects[0].id, scenarioId: scenario.id, scenarioTitle: scenario.title,
@@ -37,6 +42,10 @@ test("React Bits suite verdict reflects findings instead of showing a success ma
   const allPass = renderToStaticMarkup(createElement(SuiteProgress, { suite: base, onViewLatest: () => {} }));
   assert.match(allPass, /data-status="done"/);
   assert.match(allPass, /All checks passed in/);
+  assert.doesNotMatch(allPass, /role="status"/);
+
+  const working = renderToStaticMarkup(createElement(SuiteProgress, { suite: { ...base, status: "running" }, onViewLatest: () => {} }));
+  assert.match(working, /role="status"/);
 
   const withFindings = renderToStaticMarkup(createElement(SuiteProgress, { suite: { ...base, counts: { ...base.counts, pass: 1, fail: 1 } }, onViewLatest: () => {} }));
   assert.match(withFindings, /data-status="error"/);

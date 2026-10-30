@@ -26,6 +26,8 @@ npm run dev
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000) and click **Compare demo targets**. The same scenario produces a failure in naive mode and a pass in corrected mode. Open **Scenarios** to run individual checks or the full suite.
 
+Workspace sections have shareable links such as `?tab=scenarios` and `?tab=policy`. Back and Forward return to previously viewed sections.
+
 All three processes bind to loopback. The dashboard runs on port 3000, the target on 4100, and the provider on 4101. Host/origin checks reject browser requests from other sites. Outbound target URLs must be HTTP loopback origins and redirects are rejected. This is a trusted, single-operator workstation tool; there is no user authentication, public hosting, or tenant isolation.
 
 ## Production build for local use

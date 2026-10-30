@@ -226,6 +226,10 @@
     --ll-peak: 0.7;
   }
 
+  .lattice-loader[data-status='working'] .lattice-loader__run .lattice-loader__cell:not([data-hole]) {
+    opacity: 0.6;
+  }
+
   .lattice-loader__run .lattice-loader__cell {
     animation-delay: 0ms !important;
     animation-duration: 1400ms !important;
